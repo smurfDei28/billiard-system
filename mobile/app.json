@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "Saturday Nights Billiard",
+    "slug": "saturday-nights",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0A0E1A"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ph.saturdaynights.billiard"
+    },
+    "android": {
+      "package": "ph.saturdaynights.billiard",
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0E1A"
+      }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "0a1b137f-3112-4967-9303-777f7d1c16c4"
+      }
+    },
+    "owner": "deiejays-organization"
+  }
+}

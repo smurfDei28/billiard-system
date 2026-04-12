@@ -1,0 +1,512 @@
+// Saturday Nights Billiard Hall Management System
+// Prisma Schema - PostgreSQL (Supabase)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// MODULE: AUTH & USERS
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  STAFF
+  MEMBER
+  WALKIN
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model User {
+  id                String           @id @default(uuid())
+  email             String           @unique
+  phone             String           @unique
+  password          String
+  role              UserRole         @default(MEMBER)
+  firstName         String
+  lastName          String
+  dateOfBirth       DateTime?
+  avatarUrl         String?
+  pushToken         String?          // Expo push notification token
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  // Relations
+  membership        Membership?
+  gamifiedProfile   GamifiedProfile?
+  transactions      CreditTransaction[]
+  reservations      Reservation[]
+  tournamentEntries TournamentEntry[]
+  notifications     Notification[]
+  orders            Order[]
+  sessions          TableSession[]
+  loyaltyHistory    LoyaltyHistory[]
+  staffActions      StaffAction[]    @relation("StaffUser")
+  refreshTokens     RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 1: MEMBERSHIP & GAMIFIED PROFILES
+// ─────────────────────────────────────────────
+
+enum MembershipPlan {
+  BASIC       // Standard membership - can join tournaments, get loyalty rewards
+  PREMIUM     // Premium - faster loyalty accrual, priority queue
+  VIP         // VIP - VIP room access, exclusive tournaments
+}
+
+model Membership {
+  id              String           @id @default(uuid())
+  userId          String           @unique
+  user            User             @relation(fields: [userId], references: [id])
+  plan            MembershipPlan   @default(BASIC)
+  status          MembershipStatus @default(ACTIVE)
+  creditBalance   Float            @default(0)   // 1 PHP = 1 credit = 1 minute
+  totalHoursPlayed Float           @default(0)
+  joinedAt        DateTime         @default(now())
+  expiresAt       DateTime?
+  updatedAt       DateTime         @updatedAt
+
+  @@map("memberships")
+}
+
+model GamifiedProfile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+  displayName   String
+  level         Int      @default(1)
+  xp            Int      @default(0)
+  totalWins     Int      @default(0)
+  totalLosses   Int      @default(0)
+  totalGames    Int      @default(0)
+  winStreak     Int      @default(0)
+  bestStreak    Int      @default(0)
+  totalBallsPotted Int   @default(0)
+  rank          String   @default("Rookie")     // Rookie, Hustler, Shark, Legend, Elite
+  badges        String[] @default([])
+  updatedAt     DateTime @updatedAt
+
+  @@map("gamified_profiles")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 2: TABLE MANAGEMENT & QUEUE
+// ─────────────────────────────────────────────
+
+enum TableType {
+  STANDARD
+  VIP
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  MAINTENANCE
+}
+
+model BilliardTable {
+  id          String        @id @default(uuid())
+  tableNumber Int           @unique
+  type        TableType     @default(STANDARD)
+  status      TableStatus   @default(AVAILABLE)
+  ratePerHour Float         @default(60)   // PHP per hour
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  sessions    TableSession[]
+  reservations Reservation[]
+  queue       QueueEntry[]
+  sensorData  SensorReading[]
+
+  @@map("billiard_tables")
+}
+
+model TableSession {
+  id            String    @id @default(uuid())
+  tableId       String
+  table         BilliardTable @relation(fields: [tableId], references: [id])
+  userId        String?
+  user          User?     @relation(fields: [userId], references: [id])
+  isWalkin      Boolean   @default(false)
+  startTime     DateTime  @default(now())
+  endTime       DateTime?
+  creditsUsed   Float     @default(0)
+  extendCount   Int       @default(0)
+  status        String    @default("ACTIVE")  // ACTIVE, ENDED, EXTENDED
+  createdAt     DateTime  @default(now())
+
+  @@map("table_sessions")
+}
+
+model QueueEntry {
+  id           String        @id @default(uuid())
+  tableId      String
+  table        BilliardTable @relation(fields: [tableId], references: [id])
+  userId       String?
+  walkinName   String?
+  position     Int
+  partySize    Int           @default(1)
+  joinedAt     DateTime      @default(now())
+  notifiedAt   DateTime?
+  status       String        @default("WAITING")  // WAITING, CALLED, SEATED, CANCELLED
+
+  @@map("queue_entries")
+}
+
+model Reservation {
+  id           String        @id @default(uuid())
+  tableId      String
+  table        BilliardTable @relation(fields: [tableId], references: [id])
+  userId       String
+  user         User          @relation(fields: [userId], references: [id])
+  startTime    DateTime
+  endTime      DateTime
+  status       String        @default("CONFIRMED") // CONFIRMED, CANCELLED, COMPLETED
+  depositPaid  Boolean       @default(false)
+  notes        String?
+  createdAt    DateTime      @default(now())
+
+  @@map("reservations")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 3: CREDITS & PAYMENTS
+// ─────────────────────────────────────────────
+
+enum TransactionType {
+  TOPUP         // Adding credits
+  DEDUCTION     // Playing time consumed
+  LOYALTY_REWARD // Free hours from loyalty
+  REFUND
+  ADJUSTMENT    // Staff manual adjustment
+}
+
+enum PaymentMethod {
+  CASH
+  GCASH
+  MAYA
+  CARD
+  LOYALTY_CREDIT
+}
+
+model CreditTransaction {
+  id            String          @id @default(uuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id])
+  type          TransactionType
+  amount        Float
+  balanceBefore Float
+  balanceAfter  Float
+  description   String
+  paymentMethod PaymentMethod?
+  referenceNo   String?         // PayMongo reference
+  staffId       String?         // Staff who processed it
+  createdAt     DateTime        @default(now())
+
+  @@map("credit_transactions")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 4: LOYALTY AWARDS
+// ─────────────────────────────────────────────
+
+enum LoyaltyTrigger {
+  HOURS_MILESTONE   // 20 hours played = 1 free hour
+  BIRTHDAY          // Birthday = 1 free hour
+  REFERRAL          // Referred a new member
+  TOURNAMENT_WIN    // Won a tournament
+  STREAK_BONUS      // Played X days in a row
+}
+
+model LoyaltyHistory {
+  id          String         @id @default(uuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id])
+  trigger     LoyaltyTrigger
+  creditsAwarded Float
+  description String
+  createdAt   DateTime       @default(now())
+
+  @@map("loyalty_history")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 5: POS & INVENTORY
+// ─────────────────────────────────────────────
+
+enum ProductCategory {
+  RICE_MEAL
+  DRINKS
+  ALCOHOLIC_BEVERAGES
+  COFFEE
+  BILLIARD_EQUIPMENT
+  SNACKS
+}
+
+model Product {
+  id          String          @id @default(uuid())
+  name        String
+  category    ProductCategory
+  price       Float
+  stock       Int             @default(0)
+  lowStockAt  Int             @default(5)   // Alert when stock reaches this
+  imageUrl    String?
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  orderItems  OrderItem[]
+  stockHistory StockHistory[]
+
+  @@map("products")
+}
+
+model StockHistory {
+  id          String   @id @default(uuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  change      Int      // positive = added, negative = removed
+  reason      String   // SALE, RESTOCK, DAMAGE, ADJUSTMENT
+  staffId     String
+  createdAt   DateTime @default(now())
+
+  @@map("stock_history")
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id])
+  walkinName  String?
+  items       OrderItem[]
+  total       Float
+  paymentMethod PaymentMethod @default(CASH)
+  paidWithCredits Boolean  @default(false)
+  staffId     String
+  createdAt   DateTime    @default(now())
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Float   // price at time of purchase
+
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 6: TOURNAMENTS & BRACKETS
+// ─────────────────────────────────────────────
+
+enum TournamentFormat {
+  SINGLE_ELIMINATION
+  DOUBLE_ELIMINATION
+  ROUND_ROBIN
+}
+
+enum TournamentStatus {
+  UPCOMING
+  REGISTRATION_OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Tournament {
+  id            String           @id @default(uuid())
+  name          String
+  description   String?
+  format        TournamentFormat @default(SINGLE_ELIMINATION)
+  status        TournamentStatus @default(UPCOMING)
+  maxPlayers    Int              @default(16)
+  entryFee      Float            @default(0)
+  prizePool     Float            @default(0)
+  startDate     DateTime
+  endDate       DateTime?
+  tableId       String?
+  createdBy     String
+  entries       TournamentEntry[]
+  matches       TournamentMatch[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@map("tournaments")
+}
+
+model TournamentEntry {
+  id           String     @id @default(uuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+  userId       String
+  user         User       @relation(fields: [userId], references: [id])
+  seed         Int?
+  status       String     @default("REGISTERED") // REGISTERED, CHECKED_IN, ELIMINATED, WINNER
+  registeredAt DateTime   @default(now())
+
+  @@unique([tournamentId, userId])
+  @@map("tournament_entries")
+}
+
+model TournamentMatch {
+  id             String     @id @default(uuid())
+  tournamentId   String
+  tournament     Tournament @relation(fields: [tournamentId], references: [id])
+  round          Int
+  matchNumber    Int
+  player1Id      String?
+  player2Id      String?
+  player1Score   Int        @default(0)
+  player2Score   Int        @default(0)
+  winnerId       String?
+  status         String     @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, BYE
+  scheduledAt    DateTime?
+  completedAt    DateTime?
+  nextMatchId    String?     // For bracket progression
+  isLosers       Boolean    @default(false) // For double elimination
+
+  @@map("tournament_matches")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 7: SENSOR-BASED SCORING
+// ─────────────────────────────────────────────
+
+enum PocketPosition {
+  TOP_LEFT
+  TOP_RIGHT
+  MIDDLE_LEFT
+  MIDDLE_RIGHT
+  BOTTOM_LEFT
+  BOTTOM_RIGHT
+}
+
+model SensorReading {
+  id           String        @id @default(uuid())
+  tableId      String
+  table        BilliardTable @relation(fields: [tableId], references: [id])
+  sessionId    String?
+  pocket       PocketPosition
+  ballColor    String?       // Detected ball color if using camera
+  rawSignal    Float?        // Raw sensor value
+  confidence   Float?        // Detection confidence 0-1
+  triggeredAt  DateTime      @default(now())
+
+  @@map("sensor_readings")
+}
+
+model GameScore {
+  id           String   @id @default(uuid())
+  sessionId    String   @unique
+  tableId      String
+  player1Name  String
+  player2Name  String
+  player1Score Int      @default(0)
+  player2Score Int      @default(0)
+  ballsPotted  Json     @default("[]")  // Array of pocket events
+  gameType     String   @default("8-BALL")
+  status       String   @default("IN_PROGRESS")
+  winnerId     String?
+  startedAt    DateTime @default(now())
+  endedAt      DateTime?
+
+  @@map("game_scores")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 8: NOTIFICATIONS
+// ─────────────────────────────────────────────
+
+enum NotificationType {
+  LOW_CREDIT
+  TIME_ENDING
+  EXTENSION_AVAILABLE
+  EXTENSION_BLOCKED
+  TOURNAMENT_INVITE
+  TOURNAMENT_MATCH
+  LOYALTY_EARNED
+  BIRTHDAY_REWARD
+  QUEUE_UPDATE
+  EVENT_ANNOUNCEMENT
+  SYSTEM
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?            // Extra payload (match id, tournament id, etc.)
+  isRead    Boolean          @default(false)
+  sentAt    DateTime         @default(now())
+
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 9: STAFF ACTIONS LOG
+// ─────────────────────────────────────────────
+
+model StaffAction {
+  id          String   @id @default(uuid())
+  staffId     String
+  staff       User     @relation("StaffUser", fields: [staffId], references: [id])
+  action      String   // CREDIT_TOPUP, INVENTORY_ADD, INVENTORY_MINUS, etc.
+  targetId    String?  // User ID or Product ID affected
+  details     Json?
+  createdAt   DateTime @default(now())
+
+  @@map("staff_actions")
+}
+
+// ─────────────────────────────────────────────
+// MODULE 10: ANALYTICS
+// ─────────────────────────────────────────────
+
+model DailyReport {
+  id               String   @id @default(uuid())
+  date             DateTime @unique
+  totalRevenue     Float    @default(0)
+  tableRevenue     Float    @default(0)
+  posRevenue       Float    @default(0)
+  totalSessions    Int      @default(0)
+  totalOrders      Int      @default(0)
+  newMembers       Int      @default(0)
+  peakHour         Int?
+  busyTable        Int?
+  createdAt        DateTime @default(now())
+
+  @@map("daily_reports")
+}

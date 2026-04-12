@@ -1,0 +1,11 @@
+node_modules/
+.env
+.expo/
+dist/
+build/
+*.log
+.DS_Store
+__pycache__/
+*.pyc
+.pycache/
+prisma/dev.db
