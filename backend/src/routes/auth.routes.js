@@ -1,23 +1,38 @@
 const express = require('express');
 const router = express.Router();
 const {
-  register, login, refresh, logout,
-  registerValidation, loginValidation
+  register,
+  verifyEmail,
+  resendVerification,
+  createStaff,
+  login,
+  refresh,
+  logout,
+  getMe,
+  registerValidation,
+  loginValidation,
+  createStaffValidation,
 } = require('../controllers/auth.controller');
-const { authenticate } = require('../middleware/auth.middleware');
+const { authenticate, requireRole } = require('../middleware/auth.middleware');
 
+// Public routes
 router.post('/register', registerValidation, register);
+router.get('/verify-email', verifyEmail);                  // GET /api/auth/verify-email?token=xxx
+router.post('/resend-verification', resendVerification);   // POST /api/auth/resend-verification
 router.post('/login', loginValidation, login);
 router.post('/refresh', refresh);
 router.post('/logout', logout);
-router.get('/me', authenticate, async (req, res) => {
-  const prisma = require('../config/prisma');
-  const user = await prisma.user.findUnique({
-    where: { id: req.user.id },
-    include: { membership: true, gamifiedProfile: true },
-    omit: { password: true },
-  });
-  res.json(user);
-});
+
+// Protected
+router.get('/me', authenticate, getMe);
+
+// Admin only: create staff account
+router.post(
+  '/create-staff',
+  authenticate,
+  requireRole('ADMIN'),
+  createStaffValidation,
+  createStaff
+);
 
 module.exports = router;

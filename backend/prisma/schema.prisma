@@ -28,31 +28,34 @@ enum MembershipStatus {
 }
 
 model User {
-  id                String           @id @default(uuid())
-  email             String           @unique
-  phone             String           @unique
-  password          String
-  role              UserRole         @default(MEMBER)
-  firstName         String
-  lastName          String
-  dateOfBirth       DateTime?
-  avatarUrl         String?
-  pushToken         String?          // Expo push notification token
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  id                  String           @id @default(uuid())
+  email               String           @unique
+  phone               String           @unique
+  password            String
+  role                UserRole         @default(MEMBER)
+  firstName           String
+  lastName            String
+  dateOfBirth         DateTime?
+  avatarUrl           String?
+  pushToken           String?          // Expo push notification token
+  isEmailVerified     Boolean          @default(false)
+  emailVerifyToken    String?          // Random token sent via email
+  emailVerifyExpires  DateTime?        // Token expiry (24h)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 
   // Relations
-  membership        Membership?
-  gamifiedProfile   GamifiedProfile?
-  transactions      CreditTransaction[]
-  reservations      Reservation[]
-  tournamentEntries TournamentEntry[]
-  notifications     Notification[]
-  orders            Order[]
-  sessions          TableSession[]
-  loyaltyHistory    LoyaltyHistory[]
-  staffActions      StaffAction[]    @relation("StaffUser")
-  refreshTokens     RefreshToken[]
+  membership          Membership?
+  gamifiedProfile     GamifiedProfile?
+  transactions        CreditTransaction[]
+  reservations        Reservation[]
+  tournamentEntries   TournamentEntry[]
+  notifications       Notification[]
+  orders              Order[]
+  sessions            TableSession[]
+  loyaltyHistory      LoyaltyHistory[]
+  staffActions        StaffAction[]    @relation("StaffUser")
+  refreshTokens       RefreshToken[]
 
   @@map("users")
 }
@@ -79,36 +82,36 @@ enum MembershipPlan {
 }
 
 model Membership {
-  id              String           @id @default(uuid())
-  userId          String           @unique
-  user            User             @relation(fields: [userId], references: [id])
-  plan            MembershipPlan   @default(BASIC)
-  status          MembershipStatus @default(ACTIVE)
-  creditBalance   Float            @default(0)   // 1 PHP = 1 credit = 1 minute
-  totalHoursPlayed Float           @default(0)
-  joinedAt        DateTime         @default(now())
-  expiresAt       DateTime?
-  updatedAt       DateTime         @updatedAt
+  id               String           @id @default(uuid())
+  userId           String           @unique
+  user             User             @relation(fields: [userId], references: [id])
+  plan             MembershipPlan   @default(BASIC)
+  status           MembershipStatus @default(ACTIVE)
+  creditBalance    Float            @default(0)   // 1 PHP = 1 credit = 1 minute
+  totalHoursPlayed Float            @default(0)
+  joinedAt         DateTime         @default(now())
+  expiresAt        DateTime?
+  updatedAt        DateTime         @updatedAt
 
   @@map("memberships")
 }
 
 model GamifiedProfile {
-  id            String   @id @default(uuid())
-  userId        String   @unique
-  user          User     @relation(fields: [userId], references: [id])
-  displayName   String
-  level         Int      @default(1)
-  xp            Int      @default(0)
-  totalWins     Int      @default(0)
-  totalLosses   Int      @default(0)
-  totalGames    Int      @default(0)
-  winStreak     Int      @default(0)
-  bestStreak    Int      @default(0)
-  totalBallsPotted Int   @default(0)
-  rank          String   @default("Rookie")     // Rookie, Hustler, Shark, Legend, Elite
-  badges        String[] @default([])
-  updatedAt     DateTime @updatedAt
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id])
+  displayName      String
+  level            Int      @default(1)
+  xp               Int      @default(0)
+  totalWins        Int      @default(0)
+  totalLosses      Int      @default(0)
+  totalGames       Int      @default(0)
+  winStreak        Int      @default(0)
+  bestStreak       Int      @default(0)
+  totalBallsPotted Int      @default(0)
+  rank             String   @default("Rookie")     // Rookie, Hustler, Shark, Legend, Elite
+  badges           String[] @default([])
+  updatedAt        DateTime @updatedAt
 
   @@map("gamified_profiles")
 }
@@ -138,58 +141,62 @@ model BilliardTable {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  sessions    TableSession[]
+  sessions     TableSession[]
   reservations Reservation[]
-  queue       QueueEntry[]
-  sensorData  SensorReading[]
+  queue        QueueEntry[]
+  sensorData   SensorReading[]
 
   @@map("billiard_tables")
 }
 
 model TableSession {
-  id            String    @id @default(uuid())
-  tableId       String
-  table         BilliardTable @relation(fields: [tableId], references: [id])
-  userId        String?
-  user          User?     @relation(fields: [userId], references: [id])
-  isWalkin      Boolean   @default(false)
-  startTime     DateTime  @default(now())
-  endTime       DateTime?
-  creditsUsed   Float     @default(0)
-  extendCount   Int       @default(0)
-  status        String    @default("ACTIVE")  // ACTIVE, ENDED, EXTENDED
-  createdAt     DateTime  @default(now())
+  id          String        @id @default(uuid())
+  tableId     String
+  table       BilliardTable @relation(fields: [tableId], references: [id])
+  userId      String?
+  user        User?         @relation(fields: [userId], references: [id])
+  isWalkin    Boolean       @default(false)
+  startTime   DateTime      @default(now())
+  endTime     DateTime?
+  creditsUsed Float         @default(0)
+  extendCount Int           @default(0)
+  status      String        @default("ACTIVE")  // ACTIVE, ENDED, EXTENDED
+  createdAt   DateTime      @default(now())
 
   @@map("table_sessions")
 }
 
 model QueueEntry {
-  id           String        @id @default(uuid())
-  tableId      String
-  table        BilliardTable @relation(fields: [tableId], references: [id])
-  userId       String?
-  walkinName   String?
-  position     Int
-  partySize    Int           @default(1)
-  joinedAt     DateTime      @default(now())
-  notifiedAt   DateTime?
-  status       String        @default("WAITING")  // WAITING, CALLED, SEATED, CANCELLED
+  id         String        @id @default(uuid())
+  tableId    String
+  table      BilliardTable @relation(fields: [tableId], references: [id])
+  userId     String?
+  walkinName String?
+  position   Int
+  partySize  Int           @default(1)
+  joinedAt   DateTime      @default(now())
+  notifiedAt DateTime?
+  status     String        @default("WAITING")  // WAITING, CALLED, SEATED, CANCELLED
 
   @@map("queue_entries")
 }
 
+// Updated: members request reservations, staff approve/decline
 model Reservation {
-  id           String        @id @default(uuid())
-  tableId      String
-  table        BilliardTable @relation(fields: [tableId], references: [id])
-  userId       String
-  user         User          @relation(fields: [userId], references: [id])
-  startTime    DateTime
-  endTime      DateTime
-  status       String        @default("CONFIRMED") // CONFIRMED, CANCELLED, COMPLETED
-  depositPaid  Boolean       @default(false)
-  notes        String?
-  createdAt    DateTime      @default(now())
+  id          String        @id @default(uuid())
+  tableId     String
+  table       BilliardTable @relation(fields: [tableId], references: [id])
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
+  startTime   DateTime
+  endTime     DateTime
+  status      String        @default("PENDING") // PENDING, APPROVED, DECLINED, CANCELLED, COMPLETED
+  depositPaid Boolean       @default(false)
+  notes       String?
+  reviewedBy  String?       // Staff/Admin userId who approved or declined
+  reviewedAt  DateTime?
+  declineNote String?       // Reason if declined
+  createdAt   DateTime      @default(now())
 
   @@map("reservations")
 }
@@ -199,11 +206,12 @@ model Reservation {
 // ─────────────────────────────────────────────
 
 enum TransactionType {
-  TOPUP         // Adding credits
-  DEDUCTION     // Playing time consumed
+  TOPUP          // Adding credits
+  DEDUCTION      // Playing time consumed
   LOYALTY_REWARD // Free hours from loyalty
   REFUND
-  ADJUSTMENT    // Staff manual adjustment
+  ADJUSTMENT     // Staff manual adjustment
+  TOURNAMENT_FEE // Entry fee payment
 }
 
 enum PaymentMethod {
@@ -244,13 +252,13 @@ enum LoyaltyTrigger {
 }
 
 model LoyaltyHistory {
-  id          String         @id @default(uuid())
-  userId      String
-  user        User           @relation(fields: [userId], references: [id])
-  trigger     LoyaltyTrigger
+  id             String         @id @default(uuid())
+  userId         String
+  user           User           @relation(fields: [userId], references: [id])
+  trigger        LoyaltyTrigger
   creditsAwarded Float
-  description String
-  createdAt   DateTime       @default(now())
+  description    String
+  createdAt      DateTime       @default(now())
 
   @@map("loyalty_history")
 }
@@ -269,46 +277,46 @@ enum ProductCategory {
 }
 
 model Product {
-  id          String          @id @default(uuid())
-  name        String
-  category    ProductCategory
-  price       Float
-  stock       Int             @default(0)
-  lowStockAt  Int             @default(5)   // Alert when stock reaches this
-  imageUrl    String?
-  isActive    Boolean         @default(true)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  id           String          @id @default(uuid())
+  name         String
+  category     ProductCategory
+  price        Float
+  stock        Int             @default(0)
+  lowStockAt   Int             @default(5)   // Alert when stock reaches this
+  imageUrl     String?
+  isActive     Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
-  orderItems  OrderItem[]
+  orderItems   OrderItem[]
   stockHistory StockHistory[]
 
   @@map("products")
 }
 
 model StockHistory {
-  id          String   @id @default(uuid())
-  productId   String
-  product     Product  @relation(fields: [productId], references: [id])
-  change      Int      // positive = added, negative = removed
-  reason      String   // SALE, RESTOCK, DAMAGE, ADJUSTMENT
-  staffId     String
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  change    Int      // positive = added, negative = removed
+  reason    String   // SALE, RESTOCK, DAMAGE, ADJUSTMENT
+  staffId   String
+  createdAt DateTime @default(now())
 
   @@map("stock_history")
 }
 
 model Order {
-  id          String      @id @default(uuid())
-  userId      String?
-  user        User?       @relation(fields: [userId], references: [id])
-  walkinName  String?
-  items       OrderItem[]
-  total       Float
-  paymentMethod PaymentMethod @default(CASH)
-  paidWithCredits Boolean  @default(false)
-  staffId     String
-  createdAt   DateTime    @default(now())
+  id              String        @id @default(uuid())
+  userId          String?
+  user            User?         @relation(fields: [userId], references: [id])
+  walkinName      String?
+  items           OrderItem[]
+  total           Float
+  paymentMethod   PaymentMethod @default(CASH)
+  paidWithCredits Boolean       @default(false)
+  staffId         String
+  createdAt       DateTime      @default(now())
 
   @@map("orders")
 }
@@ -343,57 +351,85 @@ enum TournamentStatus {
   CANCELLED
 }
 
+// Supported game types as an enum for enforced dropdown values
+enum GameType {
+  EIGHT_BALL   // 8-Ball
+  NINE_BALL    // 9-Ball
+  TEN_BALL     // 10-Ball
+}
+
 model Tournament {
-  id            String           @id @default(uuid())
-  name          String
-  description   String?
-  format        TournamentFormat @default(SINGLE_ELIMINATION)
-  status        TournamentStatus @default(UPCOMING)
-  maxPlayers    Int              @default(16)
-  entryFee      Float            @default(0)
-  prizePool     Float            @default(0)
-  startDate     DateTime
-  endDate       DateTime?
-  tableId       String?
-  createdBy     String
-  entries       TournamentEntry[]
-  matches       TournamentMatch[]
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  id                String           @id @default(uuid())
+  name              String
+  description       String?
+  format            TournamentFormat @default(SINGLE_ELIMINATION)
+  gameType          GameType         @default(EIGHT_BALL)
+  status            TournamentStatus @default(UPCOMING)
+  maxPlayers        Int              @default(16)
+  entryFee          Float            @default(0)
+  prizePool         Float            @default(0)
+  startDate         DateTime         // date + time combined
+  estimatedDuration Int?             // auto-calculated in minutes
+  endDate           DateTime?
+  tableId           String?
+  createdBy         String
+  entries           TournamentEntry[]
+  matches           TournamentMatch[]
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   @@map("tournaments")
 }
 
+// Updated: entries now have PENDING_PAYMENT and PENDING_APPROVAL states
 model TournamentEntry {
-  id           String     @id @default(uuid())
-  tournamentId String
-  tournament   Tournament @relation(fields: [tournamentId], references: [id])
-  userId       String
-  user         User       @relation(fields: [userId], references: [id])
-  seed         Int?
-  status       String     @default("REGISTERED") // REGISTERED, CHECKED_IN, ELIMINATED, WINNER
-  registeredAt DateTime   @default(now())
+  id              String     @id @default(uuid())
+  tournamentId    String
+  tournament      Tournament @relation(fields: [tournamentId], references: [id])
+  userId          String
+  user            User       @relation(fields: [userId], references: [id])
+  seed            Int?
+  status          String     @default("PENDING_PAYMENT")
+  // PENDING_PAYMENT   -> member registered but hasn't paid entry fee yet
+  // PENDING_APPROVAL  -> payment recorded, waiting for admin to approve
+  // APPROVED          -> admin approved, player is in the bracket
+  // REGISTERED        -> legacy / free tournament (no fee required)
+  // CHECKED_IN        -> checked in on day of event
+  // ELIMINATED        -> knocked out
+  // WINNER            -> tournament winner
+  // CANCELLED         -> admin cancelled registration
+  paymentMethod   String?    // CASH | GCASH | MAYA | CARD
+  paymentRef      String?    // reference number
+  paidAt          DateTime?
+  approvedBy      String?    // Admin userId who approved
+  approvedAt      DateTime?
+  cancelledBy     String?    // Admin userId who cancelled
+  cancelledAt     DateTime?
+  cancelNote      String?
+  registeredAt    DateTime   @default(now())
 
   @@unique([tournamentId, userId])
   @@map("tournament_entries")
 }
 
 model TournamentMatch {
-  id             String     @id @default(uuid())
-  tournamentId   String
-  tournament     Tournament @relation(fields: [tournamentId], references: [id])
-  round          Int
-  matchNumber    Int
-  player1Id      String?
-  player2Id      String?
-  player1Score   Int        @default(0)
-  player2Score   Int        @default(0)
-  winnerId       String?
-  status         String     @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, BYE
-  scheduledAt    DateTime?
-  completedAt    DateTime?
-  nextMatchId    String?     // For bracket progression
-  isLosers       Boolean    @default(false) // For double elimination
+  id              String     @id @default(uuid())
+  tournamentId    String
+  tournament      Tournament @relation(fields: [tournamentId], references: [id])
+  round           Int
+  matchNumber     Int
+  player1Id       String?
+  player2Id       String?
+  player1Score    Int        @default(0)
+  player2Score    Int        @default(0)
+  winnerId        String?
+  status          String     @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, BYE
+  scheduledAt     DateTime?
+  completedAt     DateTime?
+  nextMatchId     String?
+  nextMatch       TournamentMatch?  @relation("MatchProgression", fields: [nextMatchId], references: [id])
+  previousMatches TournamentMatch[] @relation("MatchProgression")
+  isLosers        Boolean    @default(false) // For double elimination
 
   @@map("tournament_matches")
 }
@@ -412,15 +448,15 @@ enum PocketPosition {
 }
 
 model SensorReading {
-  id           String        @id @default(uuid())
-  tableId      String
-  table        BilliardTable @relation(fields: [tableId], references: [id])
-  sessionId    String?
-  pocket       PocketPosition
-  ballColor    String?       // Detected ball color if using camera
-  rawSignal    Float?        // Raw sensor value
-  confidence   Float?        // Detection confidence 0-1
-  triggeredAt  DateTime      @default(now())
+  id          String        @id @default(uuid())
+  tableId     String
+  table       BilliardTable @relation(fields: [tableId], references: [id])
+  sessionId   String?
+  pocket      PocketPosition
+  ballColor   String?       // Detected ball color if using camera
+  rawSignal   Float?        // Raw sensor value
+  confidence  Float?        // Detection confidence 0-1
+  triggeredAt DateTime      @default(now())
 
   @@map("sensor_readings")
 }
@@ -454,23 +490,30 @@ enum NotificationType {
   EXTENSION_BLOCKED
   TOURNAMENT_INVITE
   TOURNAMENT_MATCH
+  TOURNAMENT_APPROVED      // NEW: admin approved tournament entry
+  TOURNAMENT_CANCELLED     // NEW: admin cancelled tournament entry
+  TOURNAMENT_PAYMENT       // NEW: payment confirmed, awaiting approval
   LOYALTY_EARNED
   BIRTHDAY_REWARD
   QUEUE_UPDATE
   EVENT_ANNOUNCEMENT
+  RESERVATION_APPROVED     // NEW: staff approved table reservation
+  RESERVATION_DECLINED     // NEW: staff declined table reservation
+  TOPUP_SUCCESS            // NEW: credit top-up successful
+  PAYMENT_RECEIVED         // NEW: payment recorded
   SYSTEM
 }
 
 model Notification {
-  id        String           @id @default(uuid())
-  userId    String
-  user      User             @relation(fields: [userId], references: [id])
-  type      NotificationType
-  title     String
-  message   String
-  data      Json?            // Extra payload (match id, tournament id, etc.)
-  isRead    Boolean          @default(false)
-  sentAt    DateTime         @default(now())
+  id      String           @id @default(uuid())
+  userId  String
+  user    User             @relation(fields: [userId], references: [id])
+  type    NotificationType
+  title   String
+  message String
+  data    Json?            // Extra payload (match id, tournament id, etc.)
+  isRead  Boolean          @default(false)
+  sentAt  DateTime         @default(now())
 
   @@map("notifications")
 }
@@ -480,13 +523,13 @@ model Notification {
 // ─────────────────────────────────────────────
 
 model StaffAction {
-  id          String   @id @default(uuid())
-  staffId     String
-  staff       User     @relation("StaffUser", fields: [staffId], references: [id])
-  action      String   // CREDIT_TOPUP, INVENTORY_ADD, INVENTORY_MINUS, etc.
-  targetId    String?  // User ID or Product ID affected
-  details     Json?
-  createdAt   DateTime @default(now())
+  id        String   @id @default(uuid())
+  staffId   String
+  staff     User     @relation("StaffUser", fields: [staffId], references: [id])
+  action    String   // CREDIT_TOPUP, INVENTORY_ADD, INVENTORY_MINUS, etc.
+  targetId  String?  // User ID or Product ID affected
+  details   Json?
+  createdAt DateTime @default(now())
 
   @@map("staff_actions")
 }
@@ -496,17 +539,17 @@ model StaffAction {
 // ─────────────────────────────────────────────
 
 model DailyReport {
-  id               String   @id @default(uuid())
-  date             DateTime @unique
-  totalRevenue     Float    @default(0)
-  tableRevenue     Float    @default(0)
-  posRevenue       Float    @default(0)
-  totalSessions    Int      @default(0)
-  totalOrders      Int      @default(0)
-  newMembers       Int      @default(0)
-  peakHour         Int?
-  busyTable        Int?
-  createdAt        DateTime @default(now())
+  id            String   @id @default(uuid())
+  date          DateTime @unique
+  totalRevenue  Float    @default(0)
+  tableRevenue  Float    @default(0)
+  posRevenue    Float    @default(0)
+  totalSessions Int      @default(0)
+  totalOrders   Int      @default(0)
+  newMembers    Int      @default(0)
+  peakHour      Int?
+  busyTable     Int?
+  createdAt     DateTime @default(now())
 
   @@map("daily_reports")
 }
