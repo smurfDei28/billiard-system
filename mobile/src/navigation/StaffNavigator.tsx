@@ -2,7 +2,7 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants';
-
+import StaffReservationScreen from '../screens/staff/StaffReservationScreen';
 import StaffHomeScreen from '../screens/staff/StaffHomeScreen';
 import POSScreen from '../screens/staff/POSScreen';
 import InventoryScreen from '../screens/staff/InventoryScreen';
@@ -26,7 +26,7 @@ export default function StaffNavigator() {
         },
         tabBarActiveTintColor: COLORS.gold,
         tabBarInactiveTintColor: COLORS.textMuted,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '600' },
         tabBarIcon: ({ color, size, focused }) => {
           const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
             Tables: focused ? 'grid' : 'grid-outline',
@@ -34,8 +34,11 @@ export default function StaffNavigator() {
             Inventory: focused ? 'cube' : 'cube-outline',
             Credits: focused ? 'wallet' : 'wallet-outline',
             Queue: focused ? 'list' : 'list-outline',
+            Reservations: focused ? 'calendar' : 'calendar-outline',
           };
-          return <Ionicons name={icons[route.name] || 'circle'} size={size} color={color} />;
+          // Safe fallback using a known valid Ionicons name
+          const iconName = icons[route.name] ?? 'ellipse-outline';
+          return <Ionicons name={iconName} size={size} color={color} />;
         },
       })}
     >
@@ -44,6 +47,7 @@ export default function StaffNavigator() {
       <Tab.Screen name="Inventory" component={InventoryScreen} />
       <Tab.Screen name="Credits" component={CreditTopupScreen} />
       <Tab.Screen name="Queue" component={StaffQueueScreen} />
+      <Tab.Screen name="Reservations" component={StaffReservationScreen} />
     </Tab.Navigator>
   );
 }

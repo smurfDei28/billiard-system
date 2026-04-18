@@ -110,32 +110,35 @@ const createOrder = async (req, res) => {
   }
 
   try {
-    // Validate all products exist and have enough stock
-    const productIds = items.map((i) => i.productId);
-    const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
-
-    for (const item of items) {
-      const product = products.find((p) => p.id === item.productId);
-      if (!product) return res.status(404).json({ error: `Product not found: ${item.productId}` });
-      if (product.stock < item.quantity) {
-        return res.status(400).json({ error: `Insufficient stock for: ${product.name}` });
-      }
-    }
-
-    const total = items.reduce((sum, item) => {
-      const product = products.find((p) => p.id === item.productId);
-      return sum + product.price * item.quantity;
-    }, 0);
-
-    // If paying with credits, check balance
-    if (paidWithCredits && userId) {
-      const membership = await prisma.membership.findUnique({ where: { userId } });
-      if (!membership || membership.creditBalance < total) {
-        return res.status(400).json({ error: 'Insufficient credits' });
-      }
-    }
+    const productIds = [...new Set(items.map((i) => i.productId))];
 
     const order = await prisma.$transaction(async (tx) => {
+      const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+      const missingProductId = items.map((item) => item.productId).find((id) => !products.some((p) => p.id === id));
+      if (missingProductId) {
+        throw new Error(`Product not found: ${missingProductId}`);
+      }
+
+      for (const item of items) {
+        const product = products.find((p) => p.id === item.productId);
+        if (product.stock < item.quantity) {
+          throw new Error(`Insufficient stock for: ${product.name}`);
+        }
+      }
+
+      const total = items.reduce((sum, item) => {
+        const product = products.find((p) => p.id === item.productId);
+        return sum + product.price * item.quantity;
+      }, 0);
+
+      let membership = null;
+      if (paidWithCredits && userId) {
+        membership = await tx.membership.findUnique({ where: { userId } });
+        if (!membership || membership.creditBalance < total) {
+          throw new Error('Insufficient credits');
+        }
+      }
+
       const o = await tx.order.create({
         data: {
           userId: userId || null,
@@ -158,7 +161,6 @@ const createOrder = async (req, res) => {
         include: { items: { include: { product: true } } },
       });
 
-      // Deduct stock
       for (const item of items) {
         await tx.product.update({
           where: { id: item.productId },
@@ -174,9 +176,7 @@ const createOrder = async (req, res) => {
         });
       }
 
-      // Deduct credits if paid with credits
       if (paidWithCredits && userId) {
-        const membership = await tx.membership.findUnique({ where: { userId } });
         await tx.membership.update({
           where: { userId },
           data: { creditBalance: { decrement: total } },
@@ -202,6 +202,12 @@ const createOrder = async (req, res) => {
     res.status(201).json(order);
   } catch (err) {
     console.error(err);
+    if (err.message?.startsWith('Product not found:')) {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.message === 'Insufficient credits' || err.message?.startsWith('Insufficient stock for:')) {
+      return res.status(400).json({ error: err.message });
+    }
     res.status(500).json({ error: 'Failed to create order' });
   }
 };

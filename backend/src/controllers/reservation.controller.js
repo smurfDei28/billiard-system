@@ -22,8 +22,12 @@ const requestReservation = async (req, res) => {
   const start = new Date(startTime);
   const end = new Date(endTime);
 
-  // Validate dates are in the future
-  if (start <= new Date()) {
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return res.status(400).json({ error: 'Invalid reservation dates' });
+  }
+
+  // Validate dates are in the future, with a small buffer for timezone/skew
+  if (start < new Date(Date.now() - 60000)) {
     return res.status(400).json({ error: 'Reservation start time must be in the future' });
   }
 
@@ -73,7 +77,7 @@ const requestReservation = async (req, res) => {
     // Notify the member
     await notify(
       req.user.id,
-      'RESERVATION_APPROVED', // reuse type — handled in UI
+      'RESERVATION_PENDING',
       '📋 Reservation Request Received',
       `Your request to reserve Table ${table.tableNumber} on ${start.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} is pending staff approval.`,
       { reservationId: reservation.id, tableId }
@@ -86,7 +90,7 @@ const requestReservation = async (req, res) => {
     await prisma.notification.createMany({
       data: staffAndAdmins.map((s) => ({
         userId: s.id,
-        type: 'RESERVATION_APPROVED',
+        type: 'RESERVATION_PENDING',
         title: '📋 New Reservation Request',
         message: `${reservation.user.firstName} ${reservation.user.lastName} requested Table ${table.tableNumber} on ${start.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}.`,
         data: { reservationId: reservation.id },

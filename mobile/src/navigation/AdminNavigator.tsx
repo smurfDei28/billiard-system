@@ -1,4 +1,3 @@
-// AdminNavigator.tsx
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,10 +8,6 @@ import UserManagementScreen from '../screens/admin/UserManagementScreen';
 import TournamentManagementScreen from '../screens/admin/TournamentManagementScreen';
 import AnnouncementsScreen from '../screens/admin/AnnouncementsScreen';
 import ReportsScreen from '../screens/admin/ReportsScreen';
-
-// Staff screens accessible to admin too
-import POSScreen from '../screens/staff/POSScreen';
-import InventoryScreen from '../screens/staff/InventoryScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -40,7 +35,9 @@ export function AdminNavigator() {
             Announce: focused ? 'megaphone' : 'megaphone-outline',
             Reports: focused ? 'bar-chart' : 'bar-chart-outline',
           };
-          return <Ionicons name={icons[route.name] || 'circle'} size={size} color={color} />;
+          // Safe fallback using a known valid Ionicons name
+          const iconName = icons[route.name] ?? 'ellipse-outline';
+          return <Ionicons name={iconName} size={size} color={color} />;
         },
       })}
     >
