@@ -28,6 +28,7 @@ export default function ProfileScreen({ route }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [logoutModal, setLogoutModal] = useState(false);
   const [tab, setTab] = useState<'stats' | 'loyalty' | 'history'>('stats');
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
   useEffect(() => {
     const initial = route?.params?.initialTab;
@@ -71,6 +72,7 @@ export default function ProfileScreen({ route }: any) {
   const currentMilestoneHours = totalHoursPlayed % milestoneIntervalHours;
   const hoursProgress = currentMilestoneHours / milestoneIntervalHours;
   const hoursToNext = (milestoneIntervalHours - currentMilestoneHours).toFixed(1);
+  const visibleTransactions = showAllHistory ? transactions : transactions.slice(0, 5);
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}
@@ -214,7 +216,7 @@ export default function ProfileScreen({ route }: any) {
         <View style={s.section}>
           {transactions.length === 0 ? (
             <View style={s.empty}><Text style={s.emptyTxt}>No transactions yet</Text></View>
-          ) : transactions.map((tx: any) => {
+          ) : visibleTransactions.map((tx: any) => {
             const isCredit = ['TOPUP', 'LOYALTY_REWARD'].includes(tx.type);
             return (
               <View key={tx.id} style={s.txRow}>
@@ -231,6 +233,18 @@ export default function ProfileScreen({ route }: any) {
               </View>
             );
           })}
+          {transactions.length > 5 && (
+            <TouchableOpacity
+              accessibilityRole="button"
+              style={s.seeMoreBtn}
+              onPress={() => setShowAllHistory((current) => !current)}
+            >
+              <Text style={s.seeMoreTxt}>
+                {showAllHistory ? 'See Less' : `See More (${transactions.length - 5})`}
+              </Text>
+              <Ionicons name={showAllHistory ? 'chevron-up' : 'chevron-down'} size={16} color={COLORS.primary} />
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -328,6 +342,8 @@ const s = StyleSheet.create({
   txDesc: { fontSize: 13, color: COLORS.textPrimary },
   txDate: { fontSize: 11, color: COLORS.textMuted },
   txAmt: { fontSize: 14, fontWeight: '800' },
+  seeMoreBtn: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 12, borderWidth: 1, borderColor: COLORS.primary + '55', backgroundColor: COLORS.surface },
+  seeMoreTxt: { color: COLORS.primary, fontWeight: '800', fontSize: 13 },
   empty: { backgroundColor: COLORS.surface, borderRadius: 12, padding: 24, alignItems: 'center' },
   emptyTxt: { color: COLORS.textMuted },
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 8, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: COLORS.error + '40' },

@@ -44,7 +44,6 @@ const getAllTables = async (req, res) => {
             user: { select: { id: true, firstName: true, lastName: true } },
           },
         },
-        queue: { where: { status: { in: ACTIVE_QUEUE_STATUSES } }, orderBy: { joinedAt: 'asc' } },
         reservations: {
           where: { status: { in: ['PENDING', 'APPROVED'] }, endTime: { gt: now } },
           orderBy: { startTime: 'asc' },
@@ -63,7 +62,10 @@ const getAllTables = async (req, res) => {
         ? table.reservations.find((reservation) => new Date(reservation.startTime).getTime() === new Date(activeSession.startTime).getTime()) || null
         : null;
       const nextReservation = table.reservations.find((reservation) => new Date(reservation.startTime) > now) || null;
-      return { ...table, currentReservation, nextReservation };
+      // The old walk-in queue was retired in favour of reservations. Keep an
+      // empty array in the response for older mobile builds that still render
+      // table.queue, without exposing stale legacy QueueEntry rows.
+      return { ...table, queue: [], currentReservation, nextReservation };
     }));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch tables' });

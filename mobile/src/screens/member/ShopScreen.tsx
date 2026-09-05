@@ -244,6 +244,7 @@ export default function ShopScreen({ navigation }: any) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={s.categoryScroller}
         contentContainerStyle={s.chips}
       >
         {cats.map((c) => (
@@ -259,7 +260,9 @@ export default function ShopScreen({ navigation }: any) {
       <FlatList
         data={filtered}
         keyExtractor={(p) => p.id}
-        contentContainerStyle={s.list}
+        contentContainerStyle={[s.list, filtered.length === 0 && s.emptyList]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         refreshing={busy}
         onRefresh={load}
         ListEmptyComponent={
@@ -470,6 +473,7 @@ const s = StyleSheet.create({
     gap: 8,
   },
   input: { flex: 1, color: COLORS.textPrimary },
+  categoryScroller: { flexGrow: 0, flexShrink: 0, height: 56 },
   chips: {
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -499,6 +503,7 @@ const s = StyleSheet.create({
     lineHeight: 17,
   },
   list: { padding: 16, gap: 10 },
+  emptyList: { flexGrow: 1, justifyContent: "center" },
   card: {
     backgroundColor: COLORS.surface,
     borderRadius: 14,
@@ -529,7 +534,7 @@ const s = StyleSheet.create({
     alignItems: "center",
   },
   badgeTxt: { color: "#fff", fontSize: 10, fontWeight: "800" },
-  empty: { color: COLORS.textMuted, textAlign: "center", marginTop: 40 },
+  empty: { color: COLORS.textMuted, textAlign: "center" },
   row: {
     backgroundColor: COLORS.surface,
     borderRadius: 12,

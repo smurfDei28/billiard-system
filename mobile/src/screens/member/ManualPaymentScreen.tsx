@@ -73,12 +73,22 @@ export default function ManualPaymentScreen({ route }: any) {
   const [sandboxBusy, setSandboxBusy] = useState(false);
   const [sandboxRestoreError, setSandboxRestoreError] = useState("");
   const [sandboxCheckoutOpen, setSandboxCheckoutOpen] = useState(false);
+  const [showAllPendingShopPayments, setShowAllPendingShopPayments] = useState(false);
   const isCash = method?.method === "CASH";
   const isSandbox = method?.method === "ACQUIREMOCK_GCASH_SANDBOX";
   const isOrderPayment = purpose === "ORDER";
   const isCreditTopUp = purpose === "CREDIT_TOPUP";
   const hasRestoredSandboxOrderPayment = isOrderPayment && Boolean(sandboxPayment);
   const selectedOrder = orders.find((order: any) => order.id === orderId);
+  const pendingShopPayments = orders.filter(
+    (order: any) =>
+      order.source === "MEMBER_SHOP" &&
+      order.paymentStatus === "PENDING" &&
+      ["GCASH", "MAYA"].includes(order.paymentMethod),
+  );
+  const visiblePendingShopPayments = showAllPendingShopPayments
+    ? pendingShopPayments
+    : pendingShopPayments.slice(0, 3);
   const amount = isOrderPayment
     ? selectedOrder
       ? String(selectedOrder.total)
@@ -464,22 +474,10 @@ export default function ManualPaymentScreen({ route }: any) {
             {isOrderPayment ? "Review historical manual order payments." : "1 Credit = PHP 1. Complete your top-up through the automated GCash sandbox."}
           </Text>
         </View>
-        {orders.filter(
-          (order: any) =>
-            order.source === "MEMBER_SHOP" &&
-            order.paymentStatus === "PENDING" &&
-            ["GCASH", "MAYA"].includes(order.paymentMethod),
-        ).length > 0 && (
+        {pendingShopPayments.length > 0 && (
           <View style={s.card}>
             <Text style={s.sectionTitle}>Pending Shop Payments</Text>
-            {orders
-              .filter(
-                (order: any) =>
-                  order.source === "MEMBER_SHOP" &&
-                  order.paymentStatus === "PENDING" &&
-                  ["GCASH", "MAYA"].includes(order.paymentMethod),
-              )
-              .map((order: any) => {
+            {visiblePendingShopPayments.map((order: any) => {
                 const proofPending = order.manualPayments?.some(
                   (payment: any) => payment.status === "PENDING",
                 );
@@ -533,6 +531,24 @@ export default function ManualPaymentScreen({ route }: any) {
                   </View>
                 );
               })}
+            {pendingShopPayments.length > 3 && (
+              <TouchableOpacity
+                accessibilityRole="button"
+                style={s.seeMoreBtn}
+                onPress={() => setShowAllPendingShopPayments((current) => !current)}
+              >
+                <Text style={s.seeMoreTxt}>
+                  {showAllPendingShopPayments
+                    ? "See Less"
+                    : `See More (${pendingShopPayments.length - 3})`}
+                </Text>
+                <Ionicons
+                  name={showAllPendingShopPayments ? "chevron-up" : "chevron-down"}
+                  size={16}
+                  color={COLORS.primary}
+                />
+              </TouchableOpacity>
+            )}
           </View>
         )}
         <View style={s.card}>
@@ -1021,6 +1037,8 @@ const s = StyleSheet.create({
     gap: 8,
   },
   historyTitle: { fontWeight: "700", color: COLORS.textPrimary },
+  seeMoreBtn: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 10, borderWidth: 1, borderColor: COLORS.primary + "55", backgroundColor: COLORS.surfaceLight, marginTop: 4 },
+  seeMoreTxt: { color: COLORS.primary, fontSize: 13, fontWeight: "800" },
   muted: { color: COLORS.textMuted, fontSize: 12, marginTop: 3 },
   orderReference: { color: COLORS.textSecondary, fontSize: 12 },
   orderLine: {
