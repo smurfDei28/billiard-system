@@ -11,12 +11,15 @@ const shopMobileSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobil
 const staffMobileSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobile', 'src', 'screens', 'staff', 'PaymentVerificationScreen.tsx'), 'utf8');
 const staffOrdersSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobile', 'src', 'screens', 'staff', 'MemberOrdersScreen.tsx'), 'utf8');
 const myOrdersSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobile', 'src', 'screens', 'member', 'MyOrdersScreen.tsx'), 'utf8');
-const acquireMockServiceSource = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'acquiremock', 'app', 'services', 'gcash_mock_service.py'), 'utf8');
+const gcashSandboxServiceSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gcashSandbox.service.js'), 'utf8');
 const { summarizeRevenue } = require(path.join(__dirname, '..', 'src', 'utils', 'revenueReporting.js'));
 
-test('AcquireMock sandbox is backend-only, development-gated, and uses the documented API contract', () => {
-  assert.match(paymentSource, /ACQUIREMOCK_ENABLED/);
-  assert.doesNotMatch(paymentSource, /ACQUIREMOCK_DEFAULT_SCENARIO/);
+test('built-in GCash sandbox is backend-only, gated, and preserves the mobile API contract', () => {
+  assert.match(paymentSource, /gcashSandbox\.enabled/);
+  assert.match(gcashSandboxServiceSource, /GCASH_SANDBOX_ENABLED/);
+  assert.match(gcashSandboxServiceSource, /GCASH_SANDBOX_DEFAULT_SCENARIO/);
+  assert.doesNotMatch(gcashSandboxServiceSource, /ACQUIREMOCK_BASE_URL/);
+  assert.doesNotMatch(gcashSandboxServiceSource, /fetch\(/);
   assert.match(paymentSource, /amount: amount \* 100, currency: 'PHP', reference, idempotencyKey/);
   assert.match(paymentSource, /\/api\/payments\/gcash\/mock/);
   assert.match(paymentSource, /GET.*sandbox\/gcash\/config|router\.get\('\/sandbox\/gcash\/config'/s);
@@ -53,7 +56,7 @@ test('legacy AcquireMock mockReference records refresh through the provider UUID
 });
 
 test('an expired older pending mock is safely presented as cancelled while other unknown provider states still fail', () => {
-  assert.match(acquireMockServiceSource, /status=payment\.status/);
+  assert.match(gcashSandboxServiceSource, /statusFromNotes/);
   assert.match(paymentSource, /rawStatus === 'expired' \? 'cancelled' : rawStatus/);
   assert.match(paymentSource, /AcquireMock returned an unsupported payment status/);
   assert.match(mobileSource, /value === "cancelled" \? "Cancelled"/);
@@ -107,7 +110,7 @@ test('reopening a Shop order restores its newest AcquireMock attempt instead of 
   assert.match(mobileSource, /\/api\/payments\/sandbox\/gcash\/order\/payment\/\$\{encodeURIComponent\(latestSandboxAttempt\.id\)\}/);
   assert.match(mobileSource, /const hasRestoredSandboxOrderPayment = isOrderPayment && Boolean\(sandboxPayment\)/);
   assert.match(mobileSource, /!hasRestoredSandboxOrderPayment && <TouchableOpacity/);
-  assert.match(mobileSource, /isSandbox \? "Payment details" : "Payment proof"/);
+  assert.match(mobileSource, /isSandbox \? "Payment details" : `3\. \$\{isCash \? "Cash payment details" : "Payment proof"\}`/);
 });
 
 test('My Orders distinguishes the pending order from its current AcquireMock payment attempt', () => {

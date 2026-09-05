@@ -7,6 +7,7 @@ const prisma = require('../config/prisma');
 const { authenticate, authorize } = require('../middleware/auth.middleware');
 const { settlePendingCancellationFees } = require('../utils/cancellationFees');
 const { finalizePendingMemberOrder } = require('../services/memberOrder.service');
+const gcashSandbox = require('../services/gcashSandbox.service');
 
 const router = express.Router();
 const QR_METHODS = ['GCASH', 'MAYA'];
@@ -70,7 +71,7 @@ const paymentInclude = {
   order: { select: { id: true, receiptNumber: true } },
 };
 
-const acquireMockEnabled = () => String(process.env.ACQUIREMOCK_ENABLED || '').toLowerCase() === 'true';
+const acquireMockEnabled = gcashSandbox.enabled;
 const sandboxReference = (transactionId) => `${ACQUIREMOCK_SANDBOX_PREFIX}${transactionId}`;
 const acquireMockId = (referenceNo, notes = null) => {
   const reference = String(referenceNo || '').trim();
@@ -95,39 +96,7 @@ const normalizeAcquireMockPayment = (payment) => {
   return { ...payment, status, rawStatus };
 };
 
-const acquireMockBaseUrl = () => {
-  if (!acquireMockEnabled()) throw Object.assign(new Error('AcquireMock sandbox is disabled.'), { status: 503 });
-  try {
-    const url = new URL(String(process.env.ACQUIREMOCK_BASE_URL || ''));
-    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('unsupported protocol');
-    return url.toString().replace(/\/$/, '');
-  } catch {
-    throw Object.assign(new Error('AcquireMock sandbox is not configured.'), { status: 503 });
-  }
-};
-
-const acquireMockRequest = async (pathname, options = {}) => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try {
-    const response = await fetch(`${acquireMockBaseUrl()}${pathname}`, {
-      ...options,
-      headers: { Accept: 'application/json', ...(options.headers || {}) },
-      signal: controller.signal,
-    });
-    let data;
-    try { data = await response.json(); } catch { throw Object.assign(new Error('AcquireMock returned an invalid response.'), { status: 502 }); }
-    if (!response.ok) {
-      const message = response.status === 503 ? 'AcquireMock sandbox is disabled.' : response.status === 404 ? 'Sandbox payment was not found.' : 'AcquireMock sandbox is unavailable.';
-      throw Object.assign(new Error(message), { status: response.status === 503 ? 503 : 502, details: data });
-    }
-    return data;
-  } catch (err) {
-    if (err.name === 'AbortError') throw Object.assign(new Error('AcquireMock sandbox request timed out.'), { status: 504 });
-    if (err.status) throw err;
-    throw Object.assign(new Error('AcquireMock sandbox is unavailable.'), { status: 502 });
-  } finally { clearTimeout(timeout); }
-};
+const acquireMockRequest = gcashSandbox.request;
 
 const finalizeCreditTopup = async (tx, payment, { description, staffId = null }) => {
   const membership = await tx.membership.findUnique({ where: { userId: payment.userId } });
