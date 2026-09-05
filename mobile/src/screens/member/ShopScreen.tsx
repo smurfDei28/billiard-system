@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../context/AuthContext";
 import { COLORS } from "../../constants";
 import { formatCredits, normalizeCreditBalance } from "../../utils/credits";
+import GCashSandboxSheet from "../../components/GCashSandboxSheet";
 
 const pretty = (v: string) =>
   v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -32,7 +33,8 @@ export default function ShopScreen({ navigation }: any) {
     [wallet, setWallet] = useState(0),
     [attempt, setAttempt] = useState(key()),
     [sandboxEnabled, setSandboxEnabled] = useState(false),
-    [sandboxOrderPayment, setSandboxOrderPayment] = useState<any>(null);
+    [sandboxOrderPayment, setSandboxOrderPayment] = useState<any>(null),
+    [gcashCheckoutOpen, setGcashCheckoutOpen] = useState(false);
   const load = useCallback(async () => {
     try {
       const [p, me, sandbox] = await Promise.all([
@@ -88,13 +90,18 @@ export default function ShopScreen({ navigation }: any) {
       else delete copy[id];
       return copy;
     });
-  const place = async () => {
+  const place = async (gcashConfirmed = false) => {
     if (!items.length || busy) return;
     if (method === "CREDITS" && wallet < total)
       return Alert.alert(
         "Insufficient credits",
         "Top up your credits before placing this order.",
       );
+    if (method === "GCASH" && !gcashConfirmed) {
+      setCheckout(false);
+      setGcashCheckoutOpen(true);
+      return;
+    }
     setBusy(true);
     try {
       const r = await api.post("/api/member-orders", {
@@ -375,7 +382,7 @@ export default function ShopScreen({ navigation }: any) {
             />
             <TouchableOpacity
               disabled={busy}
-              onPress={place}
+              onPress={() => place()}
               style={s.checkout}
             >
               <Text style={s.addTxt}>
@@ -388,33 +395,23 @@ export default function ShopScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
-      <Modal visible={Boolean(sandboxOrderPayment)} transparent animationType="fade" onRequestClose={() => !busy && setSandboxOrderPayment(null)}>
-        <View style={s.overlay}>
-          <View style={s.dialog}>
-            {(() => {
-              const status = sandboxOrderPayment?.sandbox?.status;
-              const paid = status === "paid";
-              const pending = status === "pending";
-              const cancelled = status === "cancelled";
-              const title = paid ? "Payment Successful" : pending ? "Payment Processing" : cancelled ? "Payment Cancelled" : "Payment Failed";
-              const description = paid ? "Your order has been paid successfully." : pending ? "Waiting for payment confirmation." : cancelled ? "Your order was not completed." : "Your payment could not be completed. Your order was not paid.";
-              return <>
-                <Text style={s.title}>{title}</Text>
-                <Text style={s.sandboxText}>GCash Sandbox / Mock • Development testing only</Text>
-                <Text style={s.meta}>{description}</Text>
-                <Text style={s.total}>₱{Number(sandboxOrderPayment?.order?.total || sandboxOrderPayment?.payment?.amount || 0).toFixed(2)}</Text>
-                <Text style={s.meta}>Order: {sandboxOrderPayment?.order?.receiptNumber || sandboxOrderPayment?.order?.id?.slice(0, 8)}</Text>
-                <Text style={s.meta}>Reference: {sandboxOrderPayment?.sandbox?.reference}</Text>
-                {pending ? <TouchableOpacity disabled={busy} onPress={refreshSandboxOrder} style={s.checkout}><Text style={s.addTxt}>{busy ? "Refreshing..." : "Refresh Status"}</Text></TouchableOpacity> : null}
-                {pending ? <TouchableOpacity disabled={busy} onPress={cancelSandboxOrder}><Text style={s.cancel}>Cancel Mock Payment</Text></TouchableOpacity> : null}
-                {paid ? <TouchableOpacity onPress={() => { setSandboxOrderPayment(null); navigation.navigate("Orders"); }} style={s.checkout}><Text style={s.addTxt}>View Order</Text></TouchableOpacity> : null}
-                {!paid && !pending ? <TouchableOpacity disabled={busy} onPress={retrySandboxOrder} style={s.checkout}><Text style={s.addTxt}>{busy ? "Starting..." : "Retry Payment"}</Text></TouchableOpacity> : null}
-                {!pending && <TouchableOpacity onPress={() => setSandboxOrderPayment(null)}><Text style={s.cancel}>Close</Text></TouchableOpacity>}
-              </>;
-            })()}
-          </View>
-        </View>
-      </Modal>
+      <GCashSandboxSheet
+        visible={gcashCheckoutOpen}
+        amount={Number(sandboxOrderPayment?.order?.total || sandboxOrderPayment?.payment?.amount || total || 0)}
+        description="Saturday Nights Shop Order"
+        result={sandboxOrderPayment}
+        busy={busy}
+        onConfirm={() => place(true)}
+        onRefresh={refreshSandboxOrder}
+        onCancel={cancelSandboxOrder}
+        onRetry={retrySandboxOrder}
+        onClose={() => {
+          const paid = sandboxOrderPayment?.sandbox?.status === "paid";
+          setGcashCheckoutOpen(false);
+          setSandboxOrderPayment(null);
+          if (paid) navigation.navigate("Orders");
+        }}
+      />
     </View>
   );
 }

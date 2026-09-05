@@ -11,6 +11,7 @@ const shopMobileSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobil
 const staffMobileSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobile', 'src', 'screens', 'staff', 'PaymentVerificationScreen.tsx'), 'utf8');
 const staffOrdersSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobile', 'src', 'screens', 'staff', 'MemberOrdersScreen.tsx'), 'utf8');
 const myOrdersSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobile', 'src', 'screens', 'member', 'MyOrdersScreen.tsx'), 'utf8');
+const sandboxSheetSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobile', 'src', 'components', 'GCashSandboxSheet.tsx'), 'utf8');
 const gcashSandboxServiceSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'gcashSandbox.service.js'), 'utf8');
 const { summarizeRevenue } = require(path.join(__dirname, '..', 'src', 'utils', 'revenueReporting.js'));
 
@@ -87,8 +88,9 @@ test('member UI limits sandbox selection to the enabled credit-top-up path and r
   assert.match(mobileSource, /GCash Sandbox \/ Mock/);
   assert.match(mobileSource, /Development testing only\. No real GCash transaction will occur\./);
   assert.match(mobileSource, /\/api\/payments\/sandbox\/gcash\//);
-  assert.match(mobileSource, /Refresh Status/);
-  assert.match(mobileSource, /Start New Transaction/);
+  assert.match(sandboxSheetSource, /Check payment status/);
+  assert.match(sandboxSheetSource, /Try again/);
+  assert.match(sandboxSheetSource, /NO REAL MONEY/);
   assert.doesNotMatch(mobileSource, /Development scenario/);
   assert.doesNotMatch(mobileSource, /scenario: sandboxScenario/);
   assert.doesNotMatch(mobileSource, /\["GCASH", "MAYA"\]\.includes\(item\.method\)/);
@@ -126,8 +128,9 @@ test('member shop exposes Cash, Credits, and the provider-controlled GCash sandb
   assert.match(shopMobileSource, /\["CASH", "CREDITS", \.\.\.\(sandboxEnabled \? \["GCASH"\] : \[\]\)\]/);
   assert.match(shopMobileSource, /GCash Sandbox \/ Mock/);
   assert.match(shopMobileSource, /\/api\/payments\/sandbox\/gcash\/order\//);
-  assert.match(shopMobileSource, /Refresh Status/);
-  assert.match(shopMobileSource, /Retry Payment/);
+  assert.match(shopMobileSource, /GCashSandboxSheet/);
+  assert.match(sandboxSheetSource, /Check payment status/);
+  assert.match(sandboxSheetSource, /Try again/);
   assert.doesNotMatch(shopMobileSource, /\["CASH", "CREDITS", "GCASH", "MAYA"\]/);
   assert.doesNotMatch(shopMobileSource, /Submit your payment proof/);
   assert.doesNotMatch(shopMobileSource, /navigation\.navigate\("Payments", \{ orderId/);

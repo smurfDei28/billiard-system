@@ -17,6 +17,7 @@ import * as MediaLibrary from "expo-media-library";
 import { Ionicons } from "@expo/vector-icons";
 import { api, getAccessToken, useAuth } from "../../context/AuthContext";
 import { API_URL, COLORS } from "../../constants";
+import GCashSandboxSheet from "../../components/GCashSandboxSheet";
 
 const label = (value: string) =>
   value === "CREDIT_TOPUP"
@@ -71,6 +72,7 @@ export default function ManualPaymentScreen({ route }: any) {
   const [sandboxPayment, setSandboxPayment] = useState<any>(null);
   const [sandboxBusy, setSandboxBusy] = useState(false);
   const [sandboxRestoreError, setSandboxRestoreError] = useState("");
+  const [sandboxCheckoutOpen, setSandboxCheckoutOpen] = useState(false);
   const isCash = method?.method === "CASH";
   const isSandbox = method?.method === "ACQUIREMOCK_GCASH_SANDBOX";
   const isOrderPayment = purpose === "ORDER";
@@ -140,6 +142,7 @@ export default function ManualPaymentScreen({ route }: any) {
               sandbox: { status: sandboxStatusFromAttempt(latestSandboxAttempt), reference: latestSandboxAttempt.referenceNo, mockReference: latestSandboxAttempt.referenceNo },
               order,
             });
+            setSandboxCheckoutOpen(true);
             try {
               const { data } = await api.get(`/api/payments/sandbox/gcash/order/payment/${encodeURIComponent(latestSandboxAttempt.id)}`);
               await applySandboxResult(data);
@@ -264,10 +267,9 @@ export default function ManualPaymentScreen({ route }: any) {
     }
   };
 
-  const startNewSandboxTransaction = async () => {
-    if (isOrderPayment) return submitSandbox();
+  const startNewSandboxTransaction = () => {
     setSandboxPayment(null);
-    setTopUpAmount("");
+    setSandboxRestoreError("");
   };
 
   const submit = async () => {
@@ -279,7 +281,10 @@ export default function ManualPaymentScreen({ route }: any) {
       );
     if (!amount || Number(amount) <= 0)
       return Alert.alert("Missing amount", "Enter a valid amount to pay.");
-    if (isSandbox) return submitSandbox();
+    if (isSandbox) {
+      setSandboxCheckoutOpen(true);
+      return;
+    }
     if (isCreditTopUp && (!Number.isInteger(Number(topUpAmount)) || Number(topUpAmount) <= 0))
       return Alert.alert("Invalid credits", "Enter a whole number of credits greater than zero.");
     if (isCreditTopUp)
@@ -782,21 +787,6 @@ export default function ManualPaymentScreen({ route }: any) {
             )}
           </TouchableOpacity>}
         </View>
-        {sandboxPayment && (
-          <View style={[s.card, s.sandboxResult]}>
-            <Text style={s.sandboxTitle}>GCash Sandbox / Mock</Text>
-            <Text style={s.sandboxStatus}>Payment {sandboxStatusLabel(sandboxPayment.sandbox.status)}</Text>
-            {sandboxRestoreError ? <Text style={s.sandboxError}>{sandboxRestoreError}</Text> : null}
-            <Text style={s.muted}>PHP {Number(sandboxPayment.payment.amount).toFixed(2)} • {sandboxPayment.sandbox.reference}</Text>
-            <Text style={s.muted}>Mock transaction: {sandboxPayment.sandbox.mockReference}</Text>
-            {sandboxPayment.sandbox.status === "paid" && <Text style={s.instructions}>{isOrderPayment ? "Your order has been paid and accepted for preparation." : `${Number(sandboxPayment.payment.amount).toFixed(0)} Credits have been added to your account.`}</Text>}
-            {sandboxPayment.sandbox.status === "pending" && <Text style={s.instructions}>{isOrderPayment ? "We're waiting for payment confirmation. Your order will be finalized automatically once confirmed." : "We're waiting for payment confirmation. Credits will be added automatically once confirmed."}</Text>}
-            {["failed", "cancelled"].includes(sandboxPayment.sandbox.status) && <Text style={s.instructions}>{isOrderPayment ? "Your order was not paid." : "No Credits were added to your account."}</Text>}
-            <TouchableOpacity disabled={sandboxBusy} style={[s.refreshButton, sandboxBusy && s.disabled]} onPress={refreshSandbox}><Text style={s.refreshText}>Refresh Status</Text></TouchableOpacity>
-            {sandboxPayment.sandbox.status === "pending" && <TouchableOpacity disabled={sandboxBusy} style={[s.cancelButton, sandboxBusy && s.disabled]} onPress={cancelSandbox}><Text style={s.cancelText}>Cancel Mock Payment</Text></TouchableOpacity>}
-            {["failed", "cancelled"].includes(sandboxPayment.sandbox.status) && <TouchableOpacity disabled={sandboxBusy} style={[s.refreshButton, sandboxBusy && s.disabled]} onPress={startNewSandboxTransaction}><Text style={s.refreshText}>{isOrderPayment ? "Retry Payment" : "Start New Transaction"}</Text></TouchableOpacity>}
-          </View>
-        )}
         <View style={s.card}>
           <Text style={s.sectionTitle}>Payment status</Text>
           {history.length === 0 ? (
@@ -836,6 +826,19 @@ export default function ManualPaymentScreen({ route }: any) {
           )}
         </View>
       </ScrollView>
+      <GCashSandboxSheet
+        visible={sandboxCheckoutOpen}
+        amount={Number(sandboxPayment?.payment?.amount || amount || 0)}
+        description={isOrderPayment ? "Saturday Nights Shop Order" : "Saturday Nights Credit Top-up"}
+        result={sandboxPayment}
+        error={sandboxRestoreError}
+        busy={sandboxBusy}
+        onConfirm={submitSandbox}
+        onRefresh={refreshSandbox}
+        onCancel={cancelSandbox}
+        onRetry={startNewSandboxTransaction}
+        onClose={() => setSandboxCheckoutOpen(false)}
+      />
       <Modal
         visible={!!qrViewerMethod}
         transparent
