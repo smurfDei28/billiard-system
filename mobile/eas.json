@@ -5,15 +5,22 @@
   "build": {
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://billiard-system-production.up.railway.app",
+        "EXPO_PUBLIC_WS_URL": "https://billiard-system-production.up.railway.app"
+      },
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://billiard-system-production.up.railway.app",
+        "EXPO_PUBLIC_WS_URL": "https://billiard-system-production.up.railway.app"
+      },
       "android": {
         "buildType": "app-bundle"
       }
     }
   }
 }
-
