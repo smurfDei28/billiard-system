@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
+const { PH_PHONE_PATTERN, normalizeOptionalPhone } = require('../utils/phone');
 const prisma = require('../config/prisma');
 const { generateTokens, verifyRefreshToken, getRefreshTokenExpiresAt } = require('../utils/jwt');
 const { sendMailSafe } = require('../utils/mailer');
@@ -175,7 +176,9 @@ const sendPasswordResetEmail = async (email, token) => {
 const registerValidation = [
   body('email').isEmail().normalizeEmail().withMessage('Must be a valid email address'),
   body('phone')
-    .matches(/^(\+63|0)[0-9]{10}$/)
+    .customSanitizer(normalizeOptionalPhone)
+    .optional({ nullable: true })
+    .matches(PH_PHONE_PATTERN)
     .withMessage('Must be a valid Philippine phone number (e.g. 09171234567)'),
   body('password').custom((password) => {
     if (!hasValidPassword(password)) throw new Error(passwordPolicyMessage);
@@ -196,7 +199,9 @@ const loginValidation = [
 const createStaffValidation = [
   body('email').isEmail().normalizeEmail().withMessage('Must be a valid email address'),
   body('phone')
-    .matches(/^(\+63|0)[0-9]{10}$/)
+    .customSanitizer(normalizeOptionalPhone)
+    .optional({ nullable: true })
+    .matches(PH_PHONE_PATTERN)
     .withMessage('Must be a valid Philippine phone number (e.g. 09171234567)'),
   body('password').custom((password) => {
     if (!hasValidPassword(password)) throw new Error(passwordPolicyMessage);
@@ -208,19 +213,20 @@ const createStaffValidation = [
 
 // ─── Register (Members only — public endpoint) ──────────────────────────────
 
-const register = async (req, res) => {
+const registerWithDependencies = async (req, res, { db = prisma, sendVerification = sendVerificationEmail } = {}) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const { email, phone, password, firstName, lastName, dateOfBirth, displayName, pushToken } = req.body;
+  const { email, password, firstName, lastName, dateOfBirth, displayName, pushToken } = req.body;
+  const phone = normalizeOptionalPhone(req.body.phone);
 
   try {
     verificationLog('registration started', { email: maskEmail(email) });
     // Check for duplicate email / phone
-    const existing = await prisma.user.findFirst({
-      where: { OR: [{ email }, { phone }] },
+    const existing = await db.user.findFirst({
+      where: { OR: [{ email }, ...(phone ? [{ phone }] : [])] },
     });
     if (existing) {
       if (existing.email === email && !existing.isEmailVerified) {
@@ -249,7 +255,7 @@ const register = async (req, res) => {
       expiresAt: emailVerifyExpires.toISOString(),
     });
 
-    const user = await prisma.$transaction(async (tx) => {
+    const user = await db.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
           email,
@@ -305,7 +311,7 @@ const register = async (req, res) => {
         email: maskEmail(email),
         tokenId: tokenFingerprint(emailVerifyToken),
       });
-      await sendVerificationEmail(email, emailVerifyToken);
+      await sendVerification(email, emailVerifyToken);
     } catch (mailErr) {
       console.error('[Email Verification] registration email failed', {
         userId: user.id,
@@ -335,9 +341,15 @@ const register = async (req, res) => {
     });
   } catch (err) {
     console.error('[Register Error]', err);
+    if (err.code === 'P2002') {
+      const target = Array.isArray(err.meta?.target) ? err.meta.target.join(' ') : String(err.meta?.target || '');
+      return res.status(409).json({ error: target.includes('phone') ? 'Phone number is already registered' : 'Email is already registered' });
+    }
     res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
 };
+
+const register = (req, res) => registerWithDependencies(req, res);
 
 // ─── Verify Email ────────────────────────────────────────────────────────────
 
@@ -581,11 +593,12 @@ const createStaff = async (req, res) => {
     return res.status(403).json({ error: 'Only admins can create staff accounts' });
   }
 
-  const { email, phone, password, firstName, lastName } = req.body;
+  const { email, password, firstName, lastName } = req.body;
+  const phone = normalizeOptionalPhone(req.body.phone);
 
   try {
     const existing = await prisma.user.findFirst({
-      where: { OR: [{ email }, { phone }] },
+      where: { OR: [{ email }, ...(phone ? [{ phone }] : [])] },
     });
     if (existing) {
       const field = existing.email === email ? 'Email' : 'Phone number';
@@ -630,6 +643,10 @@ const createStaff = async (req, res) => {
     });
   } catch (err) {
     console.error('[Create Staff Error]', err);
+    if (err.code === 'P2002') {
+      const target = Array.isArray(err.meta?.target) ? err.meta.target.join(' ') : String(err.meta?.target || '');
+      return res.status(409).json({ error: target.includes('phone') ? 'Phone number is already registered' : 'Email is already registered' });
+    }
     res.status(500).json({ error: 'Failed to create staff account' });
   }
 };
@@ -1058,6 +1075,7 @@ const resetPassword = async (req, res) => {
 
 module.exports = {
   register,
+  registerWithDependencies,
   verifyEmail,
   resendVerification,
   verificationStatus,

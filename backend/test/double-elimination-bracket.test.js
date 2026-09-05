@@ -23,6 +23,7 @@ const makeDb = (existingMatchCount = 0) => {
         records.set(id, updated);
         return { ...updated };
       },
+      findMany: async () => [...records.values()].sort((a, b) => a.matchNumber - b.matchNumber).map((match) => ({ ...match })),
     },
   };
   return { db, matches: () => [...records.values()].sort((a, b) => a.matchNumber - b.matchNumber) };
@@ -115,7 +116,24 @@ test('Double Elimination does not create a Single Elimination fallback and prote
 
 test('Double Elimination rejects unsupported player counts before creating partial matches', async () => {
   const { db, matches } = makeDb();
-  const result = await generateDoubleEliminationBracket({ db, tournamentId: 'six-player', players: players(6) });
-  assert.deepEqual(result, { generated: false, alreadyGenerated: false, reason: 'DOUBLE_ELIMINATION_REQUIRES_4_OR_8_PLAYERS' });
+  const result = await generateDoubleEliminationBracket({ db, tournamentId: 'nine-player', players: players(9) });
+  assert.deepEqual(result, { generated: false, alreadyGenerated: false, reason: 'DOUBLE_ELIMINATION_REQUIRES_3_TO_8_PLAYERS' });
   assert.equal(matches().length, 0);
 });
+
+for (const count of [5, 6, 7]) {
+  test(`${count}-player Double Elimination resolves structural byes without an impossible pending match`, async () => {
+    const { db, matches } = makeDb();
+    const result = await generateDoubleEliminationBracket({ db, tournamentId: `${count}-player`, players: players(count) });
+    const created = matches();
+
+    assert.equal(result.generated, true);
+    assert.equal(result.bracketSize, 8);
+    assert.equal(created.length, 15);
+    assert.equal(created.filter((match) => match.bracketStage === 'WINNERS' && match.round === 1).every((match) => match.player1Id || match.player2Id), true);
+    assert.equal(new Set(created.flatMap((match) => [match.player1Id, match.player2Id]).filter(Boolean)).size, count);
+    assert.equal(created.some((match) => !match.isResetFinal && match.status === 'PENDING' && !match.player1Id && !match.player2Id &&
+      created.filter((source) => source.nextWinnerMatchId === match.id || source.nextLoserMatchId === match.id).every((source) => ['BYE', 'COMPLETED'].includes(source.status))), false);
+    assert.ok(created.some((match) => match.status === 'BYE'));
+  });
+}

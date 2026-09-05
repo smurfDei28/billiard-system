@@ -64,20 +64,20 @@ export default function UserManagementScreen() {
 
   const createStaff = async () => {
     const { firstName, lastName, email, phone, password, confirmPassword } = staffForm;
-    if (!firstName.trim() || !lastName.trim() || !email.trim() || !phone.trim() || !password)
+    if (!firstName.trim() || !lastName.trim() || !email.trim() || !password)
       return Alert.alert('Missing Fields', 'Please fill in all required fields.');
     if (password !== confirmPassword)
       return Alert.alert('Password Mismatch', 'Passwords do not match.');
     if (!hasValidPassword(password))
       return Alert.alert('Weak Password', passwordPolicyMessage);
-    if (!/^(\+63|0)[0-9]{10}$/.test(phone))
+    if (phone.trim() && !/^(\+63|0)[0-9]{10}$/.test(phone.trim()))
       return Alert.alert('Invalid Phone', 'Enter a valid Philippine phone number (e.g. 09171234567).');
 
     setStaffLoading(true);
     try {
       await api.post('/api/auth/create-staff', {
         firstName: firstName.trim(), lastName: lastName.trim(),
-        email: email.trim().toLowerCase(), phone: phone.trim(), password,
+        email: email.trim().toLowerCase(), phone: phone.trim() || null, password,
       });
       Alert.alert('✅ Staff Created', `${firstName} ${lastName} has been registered as Staff.`);
       setCreateStaffModal(false);
@@ -175,7 +175,7 @@ export default function UserManagementScreen() {
               <View style={{ flex: 1 }}><Field label="Last Name *" value={staffForm.lastName} onChange={(v: string) => setStaffForm(f => ({ ...f, lastName: v }))} placeholder="Dela Cruz" autoCapitalize="words" /></View>
             </View>
             <Field label="Email Address *" value={staffForm.email} onChange={(v: string) => setStaffForm(f => ({ ...f, email: v }))} placeholder="staff@saturdaynights.ph" keyboardType="email-address" />
-            <Field label="Phone Number *" value={staffForm.phone} onChange={(v: string) => setStaffForm(f => ({ ...f, phone: v }))} placeholder="09171234567" keyboardType="phone-pad" />
+            <Field label="Phone Number (Optional)" value={staffForm.phone} onChange={(v: string) => setStaffForm(f => ({ ...f, phone: v }))} placeholder="09171234567" keyboardType="phone-pad" />
             <Field label="Password *" value={staffForm.password} onChange={(v: string) => setStaffForm(f => ({ ...f, password: v }))} placeholder="8+ chars, uppercase, lowercase, number, special" secureTextEntry />
             <Field label="Confirm Password *" value={staffForm.confirmPassword} onChange={(v: string) => setStaffForm(f => ({ ...f, confirmPassword: v }))} placeholder="Re-enter password" secureTextEntry />
             <View style={s.passwordHint}><Text style={s.passwordHintTxt}>{passwordPolicyMessage}</Text></View>

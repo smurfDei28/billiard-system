@@ -301,7 +301,7 @@ export default function POSScreen({ navigation }: any) {
                         {m.gamifiedProfile?.displayName || `${m.firstName} ${m.lastName}`}
                       </Text>
                       <Text style={s.searchResultMeta} numberOfLines={1}>
-                        {m.email} · {m.phone}
+                        {m.email}{m.phone ? ` · ${m.phone}` : ''}
                       </Text>
                     </View>
                     <Text style={s.searchResultCredits}>{(m.membership?.creditBalance || 0).toFixed(0)}</Text>

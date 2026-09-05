@@ -53,7 +53,6 @@ export default function ReportsScreen() {
           <TodayStat icon="play-outline" label="Sessions" value={daily?.sessionsCount || 0} color={COLORS.rankShark} />
           <TodayStat icon="receipt-outline" label="POS Orders" value={daily?.ordersCount || 0} color={COLORS.rankElite} />
           <TodayStat icon="people-outline" label="New Members" value={daily?.newMembersCount || 0} color={COLORS.success} />
-          <TodayStat icon="time-outline" label="Queue Today" value={daily?.queueEntries || 0} color={COLORS.warning} />
         </View>
       </View>
 

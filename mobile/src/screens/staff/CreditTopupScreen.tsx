@@ -126,7 +126,7 @@ export default function CreditTopupScreen() {
                       {m.gamifiedProfile?.displayName || `${m.firstName} ${m.lastName}`}
                     </Text>
                     <Text style={s.searchResultMeta} numberOfLines={1}>
-                      {m.email} · {m.phone}
+                      {m.email}{m.phone ? ` · ${m.phone}` : ''}
                     </Text>
                   </View>
                   <Text style={s.searchResultCredits}>{(m.membership?.creditBalance || 0).toFixed(0)}</Text>
@@ -143,7 +143,7 @@ export default function CreditTopupScreen() {
               <View style={s.memberInfo}>
                 <Text style={s.memberName}>{foundMember.firstName} {foundMember.lastName}</Text>
                 <Text style={s.memberEmail}>{foundMember.email}</Text>
-                <Text style={s.memberPhone}>{foundMember.phone}</Text>
+                {foundMember.phone ? <Text style={s.memberPhone}>{foundMember.phone}</Text> : null}
                 <View style={s.memberBalance}>
                   <Ionicons name="wallet" size={14} color={COLORS.primary} />
                   <Text style={s.memberBalanceTxt}>

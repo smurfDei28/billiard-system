@@ -263,6 +263,47 @@ test('Losers progression, Winners Final, and Losers Final route into their deter
   assert.equal(fixture.records.get(matches[5].id).player2Id, 'b');
 });
 
+test('a first loss routes into the Losers Bracket and a second loss does not advance again', async () => {
+  const fixture = createFakePrisma({ format: 'DOUBLE_ELIMINATION' });
+  await generateDoubleEliminationBracket({ db: fixture.tx, tournamentId: 'tournament-1', players: [{ userId: 'a' }, { userId: 'b' }, { userId: 'c' }, { userId: 'd' }] });
+  const matches = [...fixture.records.values()].sort((a, b) => a.matchNumber - b.matchNumber);
+
+  await complete(fixture.prisma, matches[0].id, 5, 2); // b receives first loss
+  await complete(fixture.prisma, matches[1].id, 5, 2); // d receives first loss
+  assert.deepEqual([fixture.records.get(matches[3].id).player1Id, fixture.records.get(matches[3].id).player2Id], ['b', 'd']);
+
+  await complete(fixture.prisma, matches[3].id, 2, 5); // b receives second loss
+  const futureForB = [...fixture.records.values()].filter((match) =>
+    ['PENDING', 'IN_PROGRESS'].includes(match.status) && (match.player1Id === 'b' || match.player2Id === 'b')
+  );
+  assert.deepEqual(futureForB, []);
+  assert.equal(fixture.records.get(matches[4].id).player1Id, 'd');
+});
+
+for (const count of [5, 6, 7]) {
+  test(`${count}-player Double Elimination can progress through all structural byes to a champion`, async () => {
+    const fixture = createFakePrisma({ format: 'DOUBLE_ELIMINATION' });
+    await generateDoubleEliminationBracket({
+      db: fixture.tx,
+      tournamentId: 'tournament-1',
+      players: Array.from({ length: count }, (_, index) => ({ userId: `player-${index + 1}` })),
+    });
+
+    let lastResult = null;
+    for (let step = 0; step < 20 && fixture.effects.completions.length === 0; step += 1) {
+      const playable = [...fixture.records.values()].find((match) => match.status === 'PENDING' && !match.isResetFinal && match.player1Id && match.player2Id);
+      assert.ok(playable, `Bracket became stuck after ${step} played matches`);
+      lastResult = await complete(fixture.prisma, playable.id, 5, 2);
+    }
+
+    assert.equal(lastResult?.tournamentCompleted, true);
+    assert.equal(fixture.effects.completions.at(-1)?.status, 'COMPLETED');
+    assert.equal(fixture.effects.champions.length, 1);
+    const unresolvedImpossible = [...fixture.records.values()].filter((match) => !match.isResetFinal && match.status === 'PENDING' && !match.player1Id && !match.player2Id);
+    assert.deepEqual(unresolvedImpossible, []);
+  });
+}
+
 test('Grand Final resolves for Winners champion or activates exactly one Reset Final for Losers champion', async () => {
   const buildFinal = async () => {
     const fixture = createFakePrisma({ format: 'DOUBLE_ELIMINATION' });

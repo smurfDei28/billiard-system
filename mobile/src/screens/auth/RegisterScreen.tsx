@@ -57,8 +57,7 @@ export default function RegisterScreen({ navigation }: any) {
     if (!form.lastName.trim()) e.lastName = 'Last name is required';
     if (!form.email) e.email = 'Email is required';
     else if (!/\S+@\S+\.\S+/.test(form.email)) e.email = 'Enter a valid email';
-    if (!form.phone) e.phone = 'Phone number is required';
-    else if (!/^(\+63|0)[0-9]{10}$/.test(form.phone)) e.phone = 'Enter a valid PH phone number (e.g. 09171234567)';
+    if (form.phone.trim() && !/^(\+63|0)[0-9]{10}$/.test(form.phone.trim())) e.phone = 'Enter a valid PH phone number (e.g. 09171234567)';
     if (!form.password) e.password = 'Password is required';
     else if (!hasValidPassword(form.password)) e.password = passwordPolicyMessage;
     if (form.password !== form.confirmPassword) e.confirmPassword = 'Passwords do not match';
@@ -75,7 +74,7 @@ export default function RegisterScreen({ navigation }: any) {
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
         email: form.email.trim().toLowerCase(),
-        phone: form.phone.trim(),
+        phone: form.phone.trim() || null,
         password: form.password,
         dateOfBirth: form.dateOfBirth || undefined,
         displayName: form.displayName.trim() || undefined,
@@ -161,8 +160,8 @@ export default function RegisterScreen({ navigation }: any) {
           />
 
           <Field
-            label="Phone Number" field="phone" placeholder="09171234567"
-            keyboardType="phone-pad" hint="Philippine number format"
+            label="Phone Number (Optional)" field="phone" placeholder="09171234567"
+            keyboardType="phone-pad" hint="Philippine number format, if provided"
             value={form.phone} onChangeText={(t: string) => update('phone', t)}
             error={errors.phone}
           />

@@ -1,4 +1,4 @@
-const { BRACKET_STAGES, routingSlot } = require('./doubleEliminationBracket.service');
+const { BRACKET_STAGES, resolveDoubleEliminationByes, routingSlot } = require('./doubleEliminationBracket.service');
 const { releaseTournamentMatchTable } = require('./tournamentMatchOperations.service');
 const { updatePlayerRank } = require('../utils/gamification');
 
@@ -146,6 +146,9 @@ const completeTournamentMatchWithDb = async ({ db, matchId, player1Score, player
     await routeToMatch({ db, sourceMatch: match, participantId: winnerId, destinationId: winnerDestination, route: 'winner', playerCount, isDoubleElimination: existingMatch.tournament.format === 'DOUBLE_ELIMINATION', usesExplicitDoubleEliminationRoutes });
     if (match.bracketStage === BRACKET_STAGES.WINNERS && match.nextLoserMatchId) {
       await routeToMatch({ db, sourceMatch: match, participantId: loserId, destinationId: match.nextLoserMatchId, route: 'loser', playerCount, isDoubleElimination: true, usesExplicitDoubleEliminationRoutes });
+    }
+    if (existingMatch.tournament.format === 'DOUBLE_ELIMINATION') {
+      await resolveDoubleEliminationByes({ db, tournamentId: match.tournamentId, playerCount });
     }
   }
 

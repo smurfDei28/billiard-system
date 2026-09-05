@@ -210,7 +210,7 @@ export default function TournamentManagementScreen({ navigation }: any) {
     const raceTo = Number(form.raceTo);
     if (!Number.isInteger(raceTo) || raceTo < 1 || raceTo > 99) return Alert.alert('Invalid Race To', 'Race To must be a whole number from 1 to 99.');
     if (form.registrationDeadline >= form.startDate) return Alert.alert('Invalid Registration Deadline', 'Registration must close before the tournament starts.');
-    if (form.format === 'DOUBLE_ELIMINATION' && ![4, 8].includes(Number(form.maxPlayers))) return Alert.alert('Unsupported Double Elimination Size', 'Double Elimination currently supports exactly 4 or 8 players.');
+    if (form.format === 'DOUBLE_ELIMINATION' && (Number(form.maxPlayers) < 3 || Number(form.maxPlayers) > 8)) return Alert.alert('Unsupported Double Elimination Size', 'Double Elimination supports 3 to 8 players.');
 
     const minDate = minStartDate(!!form.testMode);
     if (form.startDate < minDate) {
@@ -268,8 +268,9 @@ export default function TournamentManagementScreen({ navigation }: any) {
       (e: any) => e.status === 'APPROVED' || e.status === 'CHECKED_IN'
     ).length || 0;
 
-    if (approvedCount < 2) {
-      return Alert.alert('Error', 'Need at least 2 approved players to generate brackets');
+    const minimumPlayers = selectedT.format === 'DOUBLE_ELIMINATION' ? 3 : 2;
+    if (approvedCount < minimumPlayers) {
+      return Alert.alert('Error', `Need at least ${minimumPlayers} approved players to generate brackets`);
     }
     Alert.alert(
       'Generate Brackets',
@@ -627,7 +628,7 @@ export default function TournamentManagementScreen({ navigation }: any) {
                             {entry.user?.firstName} {entry.user?.lastName}
                           </Text>
                           <Text style={s.pendingMeta}>
-                            {entry.user?.email} · {entry.user?.phone}
+                            {entry.user?.email}{entry.user?.phone ? ` · ${entry.user.phone}` : ''}
                           </Text>
                           <View style={[s.entryStatusBadge, { backgroundColor: ENTRY_STATUS_COLORS[entry.status] + '25' }]}>
                             <Text style={[s.entryStatusTxt, { color: ENTRY_STATUS_COLORS[entry.status] }]}>
@@ -714,19 +715,33 @@ export default function TournamentManagementScreen({ navigation }: any) {
                 {selectedT.matches?.length > 0 && (
                   <>
                     <Text style={s.sectionTitle}>Bracket</Text>
-                    {[...new Set(selectedT.matches.map((m: any) => m.round))].map((round: any) => {
-                      const roundMatches = selectedT.matches.filter((m: any) => m.round === round);
-                      return (
-                        <View key={round} style={s.roundSection}>
+                    {(selectedT.format === 'DOUBLE_ELIMINATION'
+                      ? ['WINNERS', 'LOSERS', 'GRAND_FINAL', 'RESET_FINAL'].map((stage) => ({
+                          stage,
+                          matches: selectedT.matches.filter((match: any) =>
+                            (match.bracketStage || 'WINNERS') === stage &&
+                            !(match.status === 'BYE' && !match.player1Id && !match.player2Id) &&
+                            (!match.isResetFinal || match.player1Id || match.player2Id || ['IN_PROGRESS', 'COMPLETED'].includes(match.status))
+                          ),
+                        })).filter((group) => group.matches.length > 0)
+                      : [{ stage: 'SINGLE', matches: selectedT.matches }]
+                    ).map((group: any) => (
+                      <View key={group.stage} style={s.bracketStageSection}>
+                        {selectedT.format === 'DOUBLE_ELIMINATION' && <Text style={s.bracketStageTitle}>{group.stage === 'WINNERS' ? 'WINNERS BRACKET' : group.stage === 'LOSERS' ? 'LOSERS BRACKET' : group.stage === 'GRAND_FINAL' ? 'GRAND FINAL' : 'RESET FINAL'}</Text>}
+                        {[...new Set(group.matches.map((m: any) => m.round))].map((round: any) => {
+                          const roundMatches = group.matches.filter((m: any) => m.round === round);
+                          return <View key={`${group.stage}-${round}`} style={s.roundSection}>
                           <Text style={s.roundTitle}>
-                            {round === Math.max(...selectedT.matches.map((m: any) => m.round))
-                              ? '🏆 Final' : `Round ${round}`}
+                            {group.stage === 'GRAND_FINAL' ? 'Grand Final' : group.stage === 'RESET_FINAL' ? 'Reset Final' : group.stage === 'LOSERS' ? `Losers Round ${round}` : selectedT.format === 'DOUBLE_ELIMINATION' ? `Winners Round ${round}` : round === Math.max(...group.matches.map((m: any) => m.round)) ? '🏆 Final' : `Round ${round}`}
                           </Text>
                           {roundMatches.map((match: any) => {
                             const p1 = selectedT.entries?.find((e: any) => e.userId === match.player1Id);
                             const p2 = selectedT.entries?.find((e: any) => e.userId === match.player2Id);
-                            const p1Name = p1?.user?.gamifiedProfile?.displayName || p1?.user?.firstName || 'TBD';
-                            const p2Name = p2?.user?.gamifiedProfile?.displayName || p2?.user?.firstName || 'TBD';
+                            const placeholder = match.status === 'BYE' ? 'Bye' : 'Waiting';
+                            const p1Name = p1?.user?.gamifiedProfile?.displayName || p1?.user?.firstName || placeholder;
+                            const p2Name = p2?.user?.gamifiedProfile?.displayName || p2?.user?.firstName || placeholder;
+                            const winnerEntry = selectedT.entries?.find((e: any) => e.userId === match.winnerId);
+                            const winnerName = winnerEntry?.user?.gamifiedProfile?.displayName || winnerEntry?.user?.firstName || 'Player';
                             const ready = isMatchReady(match);
 
                             return (
@@ -753,7 +768,7 @@ export default function TournamentManagementScreen({ navigation }: any) {
                                     {match.player1Score} – {match.player2Score} · ✅ {match.winnerId === match.player1Id ? p1Name : p2Name} wins
                                   </Text>
                                 ) : match.status === 'BYE' ? (
-                                  <Text style={s.matchBye}>BYE — {p1Name} auto-advances</Text>
+                                  <Text style={s.matchBye}>BYE — {winnerName} auto-advances</Text>
                                 ) : ready ? (
                                   <TouchableOpacity
                                     style={s.winBtn}
@@ -772,14 +787,15 @@ export default function TournamentManagementScreen({ navigation }: any) {
                                     <Text style={s.winBtnTxt}>Use Staff Matches for Scores</Text>
                                   </TouchableOpacity>
                                 ) : (
-                                  <Text style={s.matchWaiting}>⏳ Waiting for previous round</Text>
+                                  <Text style={s.matchWaiting}>⏳ Waiting for previous match</Text>
                                 )}
                               </View>
                             );
                           })}
-                        </View>
-                      );
-                    })}
+                          </View>;
+                        })}
+                      </View>
+                    ))}
                   </>
                 )}
 
@@ -949,6 +965,8 @@ const s = StyleSheet.create({
   playerRank: { fontSize: 11, color: COLORS.textMuted },
   cancelIconBtn: { padding: 4 },
   roundSection: { gap: 8 },
+  bracketStageSection: { gap: 10, marginBottom: 8 },
+  bracketStageTitle: { color: COLORS.primary, fontSize: 14, fontWeight: '900', letterSpacing: 1 },
   roundTitle: { fontSize: 13, fontWeight: '700', color: COLORS.textMuted },
   matchCard: { backgroundColor: COLORS.surface, borderRadius: 12, padding: 14, gap: 8, borderWidth: 1, borderColor: COLORS.surfaceBorder },
   matchRow: { flexDirection: 'row', alignItems: 'center' },

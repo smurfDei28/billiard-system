@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const { settlePendingCancellationFees } = require('../utils/cancellationFees');
 const { closeTournamentRegistration } = require('../services/tournamentRegistration.service');
 const { generateSingleEliminationBracket } = require('../services/singleEliminationBracket.service');
+const { generateDoubleEliminationBracket } = require('../services/doubleEliminationBracket.service');
 const { completeTournamentMatch } = require('../services/tournamentMatchResult.service');
 const { scheduleTournamentMatch, assignTournamentTable, setupTournamentMatch, startTournamentMatch } = require('../services/tournamentMatchOperations.service');
 const { markTournamentPrizePaid } = require('../services/tournamentPayout.service');
@@ -145,6 +146,9 @@ const createTournament = async (req, res) => {
   }
 
   const players = parseInt(maxPlayers, 10) || 16;
+  if (format === 'DOUBLE_ELIMINATION' && (players < 3 || players > 8)) {
+    return res.status(400).json({ error: 'Double Elimination supports 3 to 8 players.' });
+  }
   const parsedRaceTo = Number(raceTo ?? 5);
   if (!Number.isInteger(parsedRaceTo) || parsedRaceTo < 1 || parsedRaceTo > 99) return res.status(400).json({ error: 'Race To must be a whole number from 1 to 99.' });
   const parsedEntryFee = parseFloat(entryFee) || 0;
@@ -688,98 +692,17 @@ const generateBrackets = async (req, res) => {
 
     const players = [...tournament.entries].sort(() => Math.random() - 0.5);
 
-    await prisma.tournamentMatch.deleteMany({ where: { tournamentId } });
-
+    if (tournament.format === 'SINGLE_ELIMINATION') await prisma.tournamentMatch.deleteMany({ where: { tournamentId } });
     if (tournament.format === 'SINGLE_ELIMINATION') {
       await generateSingleEliminationBracket({ db: prisma, tournamentId, players });
     } else if (tournament.format === 'DOUBLE_ELIMINATION') {
-      const nextPow2 = Math.pow(2, Math.ceil(Math.log2(players.length)));
-      const totalRounds = Math.log2(nextPow2);
-      let matchNum = 1;
-      const createdRounds = [];
-
-      for (let round = 1; round <= totalRounds; round++) {
-        const matchesInRound = nextPow2 / Math.pow(2, round);
-        const roundCreated = [];
-
-        for (let i = 0; i < matchesInRound; i++) {
-          let player1Id = null;
-          let player2Id = null;
-          let status = 'PENDING';
-          let winnerId = null;
-
-          if (round === 1) {
-            const p1 = players[i * 2] || null;
-            const p2 = players[i * 2 + 1] || null;
-            player1Id = p1?.userId || null;
-            player2Id = p2?.userId || null;
-
-            if (player1Id && !player2Id) {
-              status = 'BYE';
-              winnerId = player1Id;
-            }
-          }
-
-          const match = await prisma.tournamentMatch.create({
-            data: {
-              tournamentId,
-              round,
-              matchNumber: matchNum++,
-              player1Id,
-              player2Id,
-              status,
-              winnerId,
-              nextMatchId: null,
-            },
-          });
-          roundCreated.push(match);
-        }
-        createdRounds.push(roundCreated);
-      }
-
-      // Link nextMatchId
-      for (let r = 0; r < createdRounds.length - 1; r++) {
-        const currentRound = createdRounds[r];
-        const nextRound = createdRounds[r + 1];
-
-        for (let i = 0; i < currentRound.length; i++) {
-          const nextMatchIndex = Math.floor(i / 2);
-          const nextMatch = nextRound[nextMatchIndex];
-          if (nextMatch) {
-            await prisma.tournamentMatch.update({
-              where: { id: currentRound[i].id },
-              data: { nextMatchId: nextMatch.id },
-            });
-          }
-        }
-      }
-
-      // Auto-advance BYE winners into Round 2
-      if (createdRounds.length > 1) {
-        const round1 = createdRounds[0];
-        const round2 = createdRounds[1];
-
-        for (let i = 0; i < round1.length; i++) {
-          if (round1[i].status === 'BYE' && round1[i].winnerId) {
-            const nextMatchIndex = Math.floor(i / 2);
-            const nextMatch = round2[nextMatchIndex];
-            if (nextMatch) {
-              const current = await prisma.tournamentMatch.findUnique({
-                where: { id: nextMatch.id },
-              });
-              await prisma.tournamentMatch.update({
-                where: { id: nextMatch.id },
-                data: {
-                  player1Id: !current.player1Id ? round1[i].winnerId : current.player1Id,
-                  player2Id:
-                    current.player1Id && !current.player2Id
-                      ? round1[i].winnerId
-                      : current.player2Id,
-                },
-              });
-            }
-          }
-        }
+      const result = await generateDoubleEliminationBracket({ db: prisma, tournamentId, players });
+      if (!result.generated) {
+        const status = result.alreadyGenerated ? 409 : 400;
+        const error = result.alreadyGenerated
+          ? 'This tournament already has matches. Existing brackets are never regenerated automatically.'
+          : 'Double Elimination requires 3 to 8 approved players.';
+        return res.status(status).json({ error, reason: result.reason });
       }
     } else if (tournament.format === 'ROUND_ROBIN') {
       let matchNum = 1;

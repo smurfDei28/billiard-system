@@ -329,14 +329,16 @@ export default function TVDisplayScreen() {
   );
 }
 
-const playerName = (entries: any[], userId: string | null) => {
+const playerName = (entries: any[], userId: string | null, placeholder = 'Waiting') => {
   const entry = entries?.find((candidate: any) => candidate.userId === userId);
-  return entry?.user?.gamifiedProfile?.displayName || entry?.user?.firstName || 'TBD';
+  return entry?.user?.gamifiedProfile?.displayName || entry?.user?.firstName || placeholder;
 };
 
 function TVTournamentPanel({ tournament }: any) {
   if (!tournament) return null;
-  const matches = (tournament.matches || []).filter(Boolean).filter((match: any) => !match.isResetFinal || match.player1Id || match.player2Id || match.status === 'COMPLETED' || match.status === 'IN_PROGRESS');
+  const matches = (tournament.matches || []).filter(Boolean)
+    .filter((match: any) => !(match.status === 'BYE' && !match.player1Id && !match.player2Id))
+    .filter((match: any) => !match.isResetFinal || match.player1Id || match.player2Id || match.status === 'COMPLETED' || match.status === 'IN_PROGRESS');
   const live = matches.filter((match: any) => match.status === 'IN_PROGRESS');
   const stages = tournament.format === 'DOUBLE_ELIMINATION'
     ? ['WINNERS', 'LOSERS', 'GRAND_FINAL', 'RESET_FINAL']
@@ -356,12 +358,13 @@ function TVTournamentPanel({ tournament }: any) {
 
 function TVMatch({ match, tournament, live = false }: any) {
   if (!match) return null;
-  const p1 = playerName(tournament.entries, match.player1Id);
-  const p2 = playerName(tournament.entries, match.player2Id);
+  const placeholder = match.status === 'BYE' ? 'Bye' : 'Waiting';
+  const p1 = playerName(tournament.entries, match.player1Id, placeholder);
+  const p2 = playerName(tournament.entries, match.player2Id, placeholder);
   return <View style={[styles.matchCard, live && styles.tvMatchLive]}>
-    <Text style={styles.matchRound}>{match.isResetFinal ? 'Reset Final' : match.isGrandFinal ? 'Grand Final' : `Round ${match.round} · Match ${match.matchNumber}`}{match.table?.tableNumber ? ` · Table ${match.table.tableNumber}` : ''}</Text>
+    <Text style={styles.matchRound}>{match.isResetFinal ? 'Reset Final' : match.isGrandFinal ? 'Grand Final' : `${match.bracketStage === 'LOSERS' ? 'Losers' : 'Winners'} Round ${match.round} · Match ${match.matchNumber}`}{match.table?.tableNumber ? ` · Table ${match.table.tableNumber}` : ''}</Text>
     <Text style={styles.tvMatchNames}>{p1} <Text style={styles.matchVSText}>vs</Text> {p2}</Text>
-    {match.status === 'BYE' ? <Text style={styles.tvMatchDetail}>BYE — Auto advance</Text> : <Text style={styles.tvMatchDetail}>{live ? 'LIVE' : match.status === 'COMPLETED' ? `${match.player1Score} – ${match.player2Score}` : match.scheduledAt ? formatPhilippineDateTime(match.scheduledAt) : 'Upcoming'}</Text>}
+    {match.status === 'BYE' ? <Text style={styles.tvMatchDetail}>BYE — Auto advance</Text> : <Text style={styles.tvMatchDetail}>{live ? 'LIVE' : match.status === 'COMPLETED' ? `${match.player1Score} – ${match.player2Score}` : !match.player1Id || !match.player2Id ? 'Waiting for previous match' : match.scheduledAt ? formatPhilippineDateTime(match.scheduledAt) : 'Upcoming'}</Text>}
   </View>;
 }
 

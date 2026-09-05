@@ -47,3 +47,18 @@ test('TV presentation uses explicit Philippine time and landscape orientation', 
   assert.match(rootNavigator, /OrientationLock\.PORTRAIT_UP/);
   assert.equal(appConfig.expo.orientation, 'default');
 });
+
+test('admin reports omit the inaccurate Queue Today card', () => {
+  const reports = readMobile('src', 'screens', 'admin', 'ReportsScreen.tsx');
+
+  assert.doesNotMatch(reports, /label="Queue Today"/);
+});
+
+test('payment review status and actions remain stable on narrow screens', () => {
+  const payments = readMobile('src', 'screens', 'staff', 'PaymentVerificationScreen.tsx');
+
+  assert.match(payments, /statusBadge:\s*\{[^}]*flexShrink:\s*0[^}]*maxWidth:\s*'48%'/);
+  assert.match(payments, /member:\s*\{[^}]*minWidth:\s*0/);
+  assert.match(payments, /actions:\s*\{[^}]*width:\s*'100%'/);
+  assert.match(payments, /if \(reviewing\) return/);
+});

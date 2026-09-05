@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../config/prisma');
 const { authenticate, authorize } = require('../middleware/auth.middleware');
+const { PH_PHONE_PATTERN, normalizeOptionalPhone } = require('../utils/phone');
 
 router.get('/profile', authenticate, async (req, res) => {
   try {
@@ -17,14 +18,22 @@ router.get('/profile', authenticate, async (req, res) => {
 
 router.patch('/profile', authenticate, async (req, res) => {
   const { firstName, lastName, phone, pushToken, avatarUrl } = req.body;
+  const phoneProvided = Object.prototype.hasOwnProperty.call(req.body, 'phone');
+  const normalizedPhone = normalizeOptionalPhone(phone);
+  if (phoneProvided && normalizedPhone && !PH_PHONE_PATTERN.test(normalizedPhone)) {
+    return res.status(400).json({ error: 'Must be a valid Philippine phone number (e.g. 09171234567)' });
+  }
   try {
     const updated = await prisma.user.update({
       where: { id: req.user.id },
-      data: { firstName, lastName, phone, pushToken, avatarUrl },
+      data: { firstName, lastName, phone: phoneProvided ? normalizedPhone : undefined, pushToken, avatarUrl },
     });
     const { password, ...safe } = updated;
     res.json(safe);
-  } catch (err) { res.status(500).json({ error: 'Failed to update profile' }); }
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Phone number is already registered' });
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
 });
 
 // Read-only public player profile. Deliberately excludes contact details,
@@ -98,7 +107,6 @@ router.get('/search', authenticate, authorize('ADMIN', 'STAFF'), async (req, res
 });
 
 module.exports = router;
-
 
 
 

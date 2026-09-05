@@ -92,14 +92,14 @@ test('Double Elimination close finalizes safely when the generator rejects an un
     tournamentId: tournament.id,
     generateDoubleBracket: async () => ({
       generated: false,
-      reason: 'DOUBLE_ELIMINATION_REQUIRES_4_OR_8_PLAYERS',
+      reason: 'DOUBLE_ELIMINATION_REQUIRES_3_TO_8_PLAYERS',
     }),
   });
 
   assert.deepEqual(updates, [{ status: 'REGISTRATION_CLOSED', finalPrizePool: 150 }]);
   assert.equal(result.bracketGenerated, false);
   assert.equal(result.bracketPending, true);
-  assert.equal(result.bracketReason, 'DOUBLE_ELIMINATION_REQUIRES_4_OR_8_PLAYERS');
+  assert.equal(result.bracketReason, 'DOUBLE_ELIMINATION_REQUIRES_3_TO_8_PLAYERS');
 });
 
 test('Single Elimination close finalizes safely without a bracket when fewer than two eligible entries remain', async () => {

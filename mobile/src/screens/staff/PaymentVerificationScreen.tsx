@@ -27,6 +27,7 @@ export default function PaymentVerificationScreen() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [remarks, setRemarks] = useState<Record<string, string>>({});
+  const [reviewing, setReviewing] = useState<{ id: string; decision: 'APPROVE' | 'REJECT' } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,11 +43,14 @@ export default function PaymentVerificationScreen() {
 
   const reviewManualPayment = async (id: string, decision: 'APPROVE' | 'REJECT') => {
     if (decision === 'REJECT' && !remarks[id]?.trim()) return Alert.alert('Reason required', 'Enter remarks for the member.');
+    if (reviewing) return;
+    setReviewing({ id, decision });
     try {
       await api.patch(`/api/payments/${id}/review`, { decision, remarks: remarks[id] || '' });
       Alert.alert(decision === 'APPROVE' ? 'Payment approved' : 'Payment updated');
-      load();
+      await load();
     } catch (err: any) { Alert.alert('Review failed', err.response?.data?.error || 'Please try again.'); }
+    finally { setReviewing(null); }
   };
 
   const visiblePayments = useMemo(() => payments.filter((payment) => filter === 'ALL' || transactionStatus(payment).filter === filter), [filter, payments]);
@@ -59,7 +63,7 @@ export default function PaymentVerificationScreen() {
       const state = transactionStatus(payment); const sandbox = isAcquireMockSandbox(payment); const canReviewManualPayment = payment.status === 'PENDING' && !sandbox;
       const addedCredits = payment.purpose === 'CREDIT_TOPUP' && state.filter === 'SUCCESSFUL' ? `+${Number(payment.amount).toFixed(0)} Credits` : null;
       return <View key={payment.id} style={s.card}>
-        <View style={s.cardTop}><View style={s.member}><Text style={s.name}>{payment.user?.firstName} {payment.user?.lastName}</Text><Text style={s.meta}>{payment.user?.email || 'Member'}</Text></View><Text style={[s.badge, { color: state.color }]}>{state.label}</Text></View>
+        <View style={s.cardTop}><View style={s.member}><Text style={s.name}>{payment.user?.firstName} {payment.user?.lastName}</Text><Text style={s.meta}>{payment.user?.email || 'Member'}</Text></View><View style={[s.statusBadge, { borderColor: state.color, backgroundColor: `${state.color}18` }]}><Text style={[s.badge, { color: state.color }]}>{state.label}</Text></View></View>
         <Text style={s.amount}>{sandbox ? 'GCash Sandbox / Mock' : payment.method === 'GCASH' ? 'GCash' : payment.method} • ₱{Number(payment.amount).toFixed(2)}</Text>
         {addedCredits ? <Text style={s.credits}>{addedCredits}</Text> : null}
         <Text style={s.meta}>{String(payment.purpose || '').replace(/_/g, ' ')} • {new Date(payment.createdAt).toLocaleString('en-PH')}</Text>
@@ -68,7 +72,7 @@ export default function PaymentVerificationScreen() {
         {sandbox ? <Text style={s.sandbox}>AcquireMock Sandbox • Provider-controlled</Text> : null}
         {payment.notes ? <Text style={s.notes}>{payment.notes}</Text> : null}
         {payment.receiptUrl ? <Image source={{ uri: imageUrl(payment.receiptUrl) }} style={s.receipt} /> : null}
-        {canReviewManualPayment ? <View style={s.manualReview}><Text style={s.manualReviewText}>Manual proof payment — staff review required.</Text><TextInput value={remarks[payment.id] || ''} onChangeText={(text) => setRemarks({ ...remarks, [payment.id]: text })} placeholder="Staff remarks (required for rejection)" placeholderTextColor={COLORS.textMuted} style={s.input} /><View style={s.actions}><TouchableOpacity style={s.reject} onPress={() => reviewManualPayment(payment.id, 'REJECT')}><Text style={s.rejectText}>Reject</Text></TouchableOpacity><TouchableOpacity style={s.approve} onPress={() => reviewManualPayment(payment.id, 'APPROVE')}><Text style={s.approveText}>Approve</Text></TouchableOpacity></View></View> : payment.reviewerRemarks ? <Text style={s.notes}>Staff remarks: {payment.reviewerRemarks}</Text> : null}
+        {canReviewManualPayment ? <View style={s.manualReview}><Text style={s.manualReviewText}>Manual proof payment — staff review required.</Text><TextInput value={remarks[payment.id] || ''} onChangeText={(text) => setRemarks({ ...remarks, [payment.id]: text })} placeholder="Staff remarks (required for rejection)" placeholderTextColor={COLORS.textMuted} style={s.input} /><View style={s.actions}><TouchableOpacity style={[s.reject, reviewing && s.actionDisabled]} onPress={() => reviewManualPayment(payment.id, 'REJECT')} disabled={reviewing !== null}>{reviewing?.id === payment.id && reviewing.decision === 'REJECT' ? <ActivityIndicator size="small" color={COLORS.error} /> : <Text style={s.rejectText}>Reject</Text>}</TouchableOpacity><TouchableOpacity style={[s.approve, reviewing && s.actionDisabled]} onPress={() => reviewManualPayment(payment.id, 'APPROVE')} disabled={reviewing !== null}>{reviewing?.id === payment.id && reviewing.decision === 'APPROVE' ? <ActivityIndicator size="small" color="#00150f" /> : <Text style={s.approveText}>Approve</Text>}</TouchableOpacity></View></View> : payment.reviewerRemarks ? <Text style={s.notes}>Staff remarks: {payment.reviewerRemarks}</Text> : null}
       </View>;
     })}
   </ScrollView>;
@@ -78,6 +82,6 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background }, content: { padding: 16, gap: 12, paddingBottom: 30 }, header: { paddingTop: 48 }, title: { fontSize: 24, fontWeight: '800', color: COLORS.textPrimary }, subtitle: { color: COLORS.textSecondary, marginTop: 4 },
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, filter: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: COLORS.surface, borderRadius: 9, borderWidth: 1, borderColor: COLORS.surfaceBorder }, filterActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + '18' }, filterText: { fontSize: 10, fontWeight: '800', color: COLORS.textMuted }, filterTextActive: { color: COLORS.primary },
   search: { height: 45, backgroundColor: COLORS.surfaceLight, borderColor: COLORS.surfaceBorder, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, alignItems: 'center', flexDirection: 'row', gap: 8 }, searchInput: { flex: 1, color: COLORS.textPrimary }, empty: { color: COLORS.textMuted, textAlign: 'center', marginTop: 30 },
-  card: { backgroundColor: COLORS.surface, borderColor: COLORS.surfaceBorder, borderWidth: 1, borderRadius: 15, padding: 14, gap: 8 }, cardTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 }, member: { flex: 1 }, name: { color: COLORS.textPrimary, fontWeight: '800', fontSize: 16 }, meta: { color: COLORS.textMuted, fontSize: 12 }, amount: { color: COLORS.primary, fontWeight: '800' }, credits: { color: COLORS.success, fontWeight: '800' }, badge: { fontSize: 11, fontWeight: '900', textAlign: 'right' }, reference: { color: COLORS.textSecondary, fontSize: 12 }, sandbox: { color: COLORS.gold, fontSize: 12, fontWeight: '800' }, notes: { color: COLORS.textSecondary, fontSize: 12 }, receipt: { height: 220, width: '100%', resizeMode: 'contain', backgroundColor: COLORS.surfaceLight, borderRadius: 10 },
-  manualReview: { gap: 8, paddingTop: 4, borderTopWidth: 1, borderColor: COLORS.surfaceBorder }, manualReviewText: { color: COLORS.textMuted, fontSize: 12 }, input: { height: 44, borderRadius: 9, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surfaceLight, paddingHorizontal: 12, color: COLORS.textPrimary }, actions: { flexDirection: 'row', gap: 7 }, approve: { flex: 1, height: 45, borderRadius: 10, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.primary }, reject: { flex: 1, height: 45, borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderColor: COLORS.error, borderWidth: 1 }, approveText: { fontWeight: '800', color: '#00150f', fontSize: 11 }, rejectText: { fontWeight: '800', color: COLORS.error, fontSize: 11 },
+  card: { backgroundColor: COLORS.surface, borderColor: COLORS.surfaceBorder, borderWidth: 1, borderRadius: 15, padding: 14, gap: 8 }, cardTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }, member: { flex: 1, minWidth: 0 }, name: { color: COLORS.textPrimary, fontWeight: '800', fontSize: 16 }, meta: { color: COLORS.textMuted, fontSize: 12 }, amount: { color: COLORS.primary, fontWeight: '800' }, credits: { color: COLORS.success, fontWeight: '800' }, statusBadge: { flexShrink: 0, maxWidth: '48%', minHeight: 28, paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1, borderRadius: 999, justifyContent: 'center' }, badge: { fontSize: 10, fontWeight: '900', textAlign: 'center' }, reference: { color: COLORS.textSecondary, fontSize: 12 }, sandbox: { color: COLORS.gold, fontSize: 12, fontWeight: '800' }, notes: { color: COLORS.textSecondary, fontSize: 12 }, receipt: { height: 220, width: '100%', resizeMode: 'contain', backgroundColor: COLORS.surfaceLight, borderRadius: 10 },
+  manualReview: { gap: 8, paddingTop: 4, borderTopWidth: 1, borderColor: COLORS.surfaceBorder }, manualReviewText: { color: COLORS.textMuted, fontSize: 12 }, input: { height: 44, borderRadius: 9, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surfaceLight, paddingHorizontal: 12, color: COLORS.textPrimary }, actions: { flexDirection: 'row', width: '100%', gap: 10 }, approve: { flex: 1, minWidth: 0, height: 46, borderRadius: 10, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.primary }, reject: { flex: 1, minWidth: 0, height: 46, borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderColor: COLORS.error, borderWidth: 1 }, actionDisabled: { opacity: 0.55 }, approveText: { fontWeight: '800', color: '#00150f', fontSize: 13 }, rejectText: { fontWeight: '800', color: COLORS.error, fontSize: 13 },
 });

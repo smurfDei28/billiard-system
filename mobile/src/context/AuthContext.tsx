@@ -61,7 +61,7 @@ api.interceptors.response.use(
 interface User {
   id: string;
   email: string;
-  phone: string;
+  phone: string | null;
   firstName: string;
   lastName: string;
   role: 'ADMIN' | 'STAFF' | 'MEMBER';
@@ -81,7 +81,7 @@ interface AuthContextType {
 
 interface RegisterData {
   email: string;
-  phone: string;
+  phone?: string | null;
   password: string;
   firstName: string;
   lastName: string;

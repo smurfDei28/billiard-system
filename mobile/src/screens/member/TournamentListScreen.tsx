@@ -619,14 +619,14 @@ const InfoStat = ({ icon, label, value }: any) => (
   </View>
 );
 
-const MatchPlayer = ({ entry, score, isWinner, onPress }: any) => {
+const MatchPlayer = ({ entry, score, isWinner, onPress, placeholder = 'Waiting' }: any) => {
   const gp = entry?.user?.gamifiedProfile;
   const rankCfg = RANK_CONFIG[gp?.rank as keyof typeof RANK_CONFIG] || RANK_CONFIG.Rookie;
   return (
     <TouchableOpacity disabled={!entry} onPress={onPress} style={[s.matchPlayer, isWinner && s.matchPlayerWinner]}>
       <Text style={s.matchPlayerIcon}>{entry ? rankCfg.icon : '❓'}</Text>
       <Text style={s.matchPlayerName} numberOfLines={1}>
-        {entry ? (gp?.displayName || entry.user?.firstName) : 'TBD'}
+        {entry ? (gp?.displayName || entry.user?.firstName) : placeholder}
       </Text>
       <Text style={[s.matchScore, isWinner && { color: COLORS.gold }]}>{score ?? '-'}</Text>
     </TouchableOpacity>
@@ -640,11 +640,13 @@ const STAGE_LABELS: Record<string, string> = {
   RESET_FINAL: 'Reset Final',
 };
 
-const matchLabel = (match: any) => !match ? 'Match pending' : match.isResetFinal ? 'Reset Final' : match.isGrandFinal ? 'Grand Final' : `Round ${match.round} · Match ${match.matchNumber}`;
+const matchLabel = (match: any) => !match ? 'Match pending' : match.isResetFinal ? 'Reset Final' : match.isGrandFinal ? 'Grand Final' : `${match.bracketStage === 'LOSERS' ? 'Losers' : 'Winners'} Round ${match.round} · Match ${match.matchNumber}`;
 
 function TournamentPresentation({ tournament, currentUserId, onPlayerPress }: any) {
   const entriesByUser = new Map((tournament?.entries || []).filter(Boolean).map((entry: any) => [entry.userId, entry]));
-  const matches = (tournament?.matches || []).filter(Boolean).filter((match: any) => !match.isResetFinal || match.player1Id || match.player2Id || match.status === 'COMPLETED' || match.status === 'IN_PROGRESS');
+  const matches = (tournament?.matches || []).filter(Boolean)
+    .filter((match: any) => !(match.status === 'BYE' && !match.player1Id && !match.player2Id))
+    .filter((match: any) => !match.isResetFinal || match.player1Id || match.player2Id || match.status === 'COMPLETED' || match.status === 'IN_PROGRESS');
   if (!matches.length) return <View style={s.presentationEmpty}><Text style={s.emptyTxt}>{tournament?.status === 'REGISTRATION_CLOSED' ? 'Registration is closed. Bracket is being prepared.' : 'No bracket has been generated yet.'}</Text></View>;
 
   const ownMatches = matches.filter((match: any) => match.player1Id === currentUserId || match.player2Id === currentUserId).filter((match: any) => ['PENDING', 'IN_PROGRESS'].includes(match.status));
@@ -660,7 +662,7 @@ function TournamentPresentation({ tournament, currentUserId, onPlayerPress }: an
     {stages.map(({ stage, matches: stageMatches }) => <View key={stage} style={s.bracketStage}>
       <Text style={s.stageTitle}>{STAGE_LABELS[stage] || (tournament?.format === 'ROUND_ROBIN' ? 'Match Results' : 'Bracket')}</Text>
       {[...new Set(stageMatches.map((match: any) => match.round))].map((round: any) => <View key={`${stage}-${round}`}>
-        <Text style={s.roundTitle}>{stage === 'WINNERS' && round === Math.max(...stageMatches.map((match: any) => match.round)) && tournament?.format === 'SINGLE_ELIMINATION' ? 'Final' : `Round ${round}`}</Text>
+        <Text style={s.roundTitle}>{stage === 'GRAND_FINAL' ? 'Grand Final' : stage === 'RESET_FINAL' ? 'Reset Final' : stage === 'LOSERS' ? `Losers Round ${round}` : tournament?.format === 'DOUBLE_ELIMINATION' ? `Winners Round ${round}` : round === Math.max(...stageMatches.map((match: any) => match.round)) ? 'Final' : `Round ${round}`}</Text>
         {stageMatches.filter((match: any) => match.round === round).map((match: any) => <BracketMatch key={match.id} match={match} raceTo={tournament?.raceTo} entriesByUser={entriesByUser} currentUserId={currentUserId} onPlayerPress={onPlayerPress} />)}
       </View>)}
     </View>)}
@@ -675,13 +677,13 @@ function BracketMatch({ match, raceTo, entriesByUser, currentUserId, onPlayerPre
   return <View style={[s.matchCard, match.status === 'IN_PROGRESS' && s.matchLive, isOwn && s.matchMine]}>
     <View style={s.matchMeta}><Text style={s.matchMetaText}>{matchLabel(match)}</Text>{isOwn && <Text style={s.myMatchTag}>YOUR MATCH</Text>}</View>
     {match.status === 'IN_PROGRESS' && <View style={s.liveBadge}><Text style={s.liveTxt}>LIVE</Text></View>}
-    <MatchPlayer entry={p1} score={match.player1Score} isWinner={match.winnerId === match.player1Id} onPress={() => onPlayerPress(p1)} />
+    <MatchPlayer entry={p1} score={match.player1Score} isWinner={match.winnerId === match.player1Id} onPress={() => onPlayerPress(p1)} placeholder={match.status === 'BYE' ? 'Bye' : 'Waiting'} />
     <View style={s.vsBox}><Text style={s.vsTxt}>VS</Text></View>
-    <MatchPlayer entry={p2} score={match.player2Score} isWinner={match.winnerId === match.player2Id} onPress={() => onPlayerPress(p2)} />
+    <MatchPlayer entry={p2} score={match.player2Score} isWinner={match.winnerId === match.player2Id} onPress={() => onPlayerPress(p2)} placeholder={match.status === 'BYE' ? 'Bye' : 'Waiting'} />
     <Text style={s.matchDetails}>Race To {raceTo || 5}{match.scheduledAt ? ` · ${new Date(match.scheduledAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}{match.table?.tableNumber ? ` · Table ${match.table.tableNumber}` : ''}</Text>
     {match.status === 'COMPLETED' && winner && <Text style={s.winnerTxt}>Winner: {winner.user?.gamifiedProfile?.displayName || winner.user?.firstName}</Text>}
     {match.status === 'BYE' && <Text style={s.byeTxt}>BYE — Auto advance</Text>}
-    {match.status === 'PENDING' && (!match.player1Id || !match.player2Id) && <Text style={s.byeTxt}>Waiting for opponent</Text>}
+    {match.status === 'PENDING' && (!match.player1Id || !match.player2Id) && <Text style={s.byeTxt}>Waiting for previous match</Text>}
   </View>;
 }
 

@@ -5,7 +5,26 @@ const BRACKET_STAGES = Object.freeze({
   RESET_FINAL: 'RESET_FINAL',
 });
 
-const unsupportedPlayerCount = (count) => ![4, 8].includes(count);
+const bracketSizeForPlayerCount = (count) => {
+  if (count >= 3 && count <= 4) return 4;
+  if (count >= 5 && count <= 8) return 8;
+  return null;
+};
+
+const unsupportedPlayerCount = (count) => !bracketSizeForPlayerCount(count);
+
+const seedPlayersWithByes = (players, bracketSize) => {
+  const slots = Array(bracketSize).fill(null);
+  const byeCount = bracketSize - players.length;
+  let playerIndex = 0;
+  for (let matchIndex = 0; matchIndex < byeCount; matchIndex += 1) {
+    slots[matchIndex * 2] = players[playerIndex++];
+  }
+  for (let slot = byeCount * 2; slot < slots.length; slot += 1) {
+    slots[slot] = players[playerIndex++] || null;
+  }
+  return slots;
+};
 
 const plans = {
   4: [
@@ -36,27 +55,96 @@ const plans = {
   ],
 };
 
+const doubleEliminationPlan = (bracketSize) => plans[bracketSize]?.map((match) => ({
+  ...match,
+  ...(match.players && { players: [...match.players] }),
+  ...(match.winner && { winner: [...match.winner] }),
+  ...(match.loser && { loser: [...match.loser] }),
+}));
+
 const routingSlot = ({ playerCount, sourceKey, sourceMatch, route }) => {
+  const bracketSize = bracketSizeForPlayerCount(playerCount) || playerCount;
   const source = sourceKey
-    ? plans[playerCount]?.find((match) => match.key === sourceKey)
-    : plans[playerCount]?.[Number(sourceMatch?.matchNumber) - 1];
+    ? plans[bracketSize]?.find((match) => match.key === sourceKey)
+    : plans[bracketSize]?.[Number(sourceMatch?.matchNumber) - 1];
   const destination = source?.[route];
   return destination ? { destinationKey: destination[0], slot: destination[1] } : null;
+};
+
+const resolveDoubleEliminationByes = async ({ db, tournamentId, playerCount }) => {
+  const bracketSize = bracketSizeForPlayerCount(playerCount) || playerCount;
+  const plan = plans[bracketSize];
+  if (!plan) throw Object.assign(new Error('Double Elimination bracket structure is invalid'), { status: 409 });
+
+  const persisted = await db.tournamentMatch.findMany({
+    where: { tournamentId },
+    orderBy: { matchNumber: 'asc' },
+  });
+  if (persisted.length !== plan.length) throw Object.assign(new Error('Double Elimination bracket structure is invalid'), { status: 409 });
+
+  const matchesByKey = new Map(plan.map((definition, index) => [definition.key, { ...persisted[index] }]));
+  const incoming = new Map(plan.map((definition) => [definition.key, []]));
+  for (const source of plan) {
+    for (const route of ['winner', 'loser']) {
+      const destination = source[route];
+      if (destination) incoming.get(destination[0]).push({ sourceKey: source.key, route, slot: destination[1] });
+    }
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const definition of plan) {
+      if (definition.resetFinal) continue;
+      const match = matchesByKey.get(definition.key);
+      if (match.status !== 'PENDING' || (match.player1Id && match.player2Id)) continue;
+
+      const feeders = incoming.get(definition.key);
+      const inputsResolved = definition.players
+        ? true
+        : feeders.length > 0 && feeders.every(({ sourceKey }) => ['COMPLETED', 'BYE'].includes(matchesByKey.get(sourceKey).status));
+      if (!inputsResolved) continue;
+
+      const winnerId = match.player1Id || match.player2Id || null;
+      const resolved = await db.tournamentMatch.update({
+        where: { id: match.id },
+        data: { status: 'BYE', winnerId, completedAt: new Date() },
+      });
+      matchesByKey.set(definition.key, { ...match, ...resolved });
+      changed = true;
+
+      if (!winnerId || !definition.winner) continue;
+      const [destinationKey, slot] = definition.winner;
+      const destination = matchesByKey.get(destinationKey);
+      const field = slot === 1 ? 'player1Id' : 'player2Id';
+      if (destination[field] && destination[field] !== winnerId) {
+        throw Object.assign(new Error('Double Elimination BYE destination slot is occupied by a different participant'), { status: 409 });
+      }
+      if (!destination[field]) {
+        const routed = await db.tournamentMatch.update({ where: { id: destination.id }, data: { [field]: winnerId } });
+        matchesByKey.set(destinationKey, { ...destination, ...routed });
+      }
+    }
+  }
+
+  return [...matchesByKey.values()];
 };
 
 const generateDoubleEliminationBracket = async ({ db, tournamentId, players }) => {
   const existingMatchCount = await db.tournamentMatch.count({ where: { tournamentId } });
   if (existingMatchCount > 0) return { generated: false, alreadyGenerated: true, reason: 'EXISTING_BRACKET' };
   if (unsupportedPlayerCount(players.length)) {
-    return { generated: false, alreadyGenerated: false, reason: 'DOUBLE_ELIMINATION_REQUIRES_4_OR_8_PLAYERS' };
+    return { generated: false, alreadyGenerated: false, reason: 'DOUBLE_ELIMINATION_REQUIRES_3_TO_8_PLAYERS' };
   }
 
-  const plan = plans[players.length];
+  const bracketSize = bracketSizeForPlayerCount(players.length);
+  const plan = plans[bracketSize];
+  const seededPlayers = seedPlayersWithByes(players, bracketSize);
   const matchesByKey = new Map();
   let matchNumber = 1;
   for (const match of plan) {
-    const player1Id = match.players ? players[match.players[0]]?.userId || null : null;
-    const player2Id = match.players ? players[match.players[1]]?.userId || null : null;
+    const player1Id = match.players ? seededPlayers[match.players[0]]?.userId || null : null;
+    const player2Id = match.players ? seededPlayers[match.players[1]]?.userId || null : null;
     const created = await db.tournamentMatch.create({
       data: {
         tournamentId,
@@ -95,12 +183,20 @@ const generateDoubleEliminationBracket = async ({ db, tournamentId, players }) =
     }
   }
 
+  await resolveDoubleEliminationByes({ db, tournamentId, playerCount: players.length });
+
+  const resolvedMatches = await db.tournamentMatch.findMany({
+    where: { tournamentId },
+    orderBy: { matchNumber: 'asc' },
+  });
+
   return {
     generated: true,
     alreadyGenerated: false,
     playerCount: players.length,
-    matches: plan.map((match) => ({ ...matchesByKey.get(match.key), key: match.key })),
+    bracketSize,
+    matches: plan.map((match, index) => ({ ...resolvedMatches[index], key: match.key })),
   };
 };
 
-module.exports = { BRACKET_STAGES, generateDoubleEliminationBracket, routingSlot };
+module.exports = { BRACKET_STAGES, bracketSizeForPlayerCount, doubleEliminationPlan, generateDoubleEliminationBracket, resolveDoubleEliminationByes, routingSlot, seedPlayersWithByes };

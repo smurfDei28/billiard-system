@@ -315,7 +315,7 @@ export default function StaffHomeScreen({ navigation }: any) {
                         {m.gamifiedProfile?.displayName || `${m.firstName} ${m.lastName}`}
                       </Text>
                       <Text style={styles.searchResultMeta} numberOfLines={1}>
-                        {m.email} · {m.phone}
+                        {m.email}{m.phone ? ` · ${m.phone}` : ''}
                       </Text>
                     </View>
                     <Text style={styles.searchResultCredits}>{(m.membership?.creditBalance || 0).toFixed(0)}</Text>

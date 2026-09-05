@@ -138,7 +138,7 @@ export default function StaffReservationScreen() {
             <View style={s.cardTop}>
               <View style={s.memberInfo}>
                 <Text style={s.memberName}>{r.user?.firstName} {r.user?.lastName}</Text>
-                <Text style={s.memberContact}>{r.user?.phone} · {r.user?.email}</Text>
+                <Text style={s.memberContact}>{r.user?.phone ? `${r.user.phone} · ` : ''}{r.user?.email}</Text>
               </View>
               <View style={[s.statusBadge, { backgroundColor: STATUS_COLORS[r.status] + '25' }]}>
                 <Text style={[s.statusTxt, { color: STATUS_COLORS[r.status] }]}>{r.status}</Text>

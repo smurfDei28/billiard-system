@@ -7,7 +7,7 @@ import { useSocket } from '../../context/SocketContext';
 import { COLORS } from '../../constants';
 
 const stageLabel = (match: any) => !match ? 'Match pending' : match.isResetFinal ? 'Reset Final' : match.isGrandFinal ? 'Grand Final' : `${String(match.bracketStage || 'WINNERS').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())} · Round ${match.round} · Match ${match.matchNumber}`;
-const playerName = (player: any, id: string) => player?.gamifiedProfile?.displayName || player?.firstName || (id ? 'Player' : 'TBD');
+const playerName = (player: any, id: string) => player?.gamifiedProfile?.displayName || player?.firstName || (id ? 'Player' : 'Waiting');
 
 export default function StaffTournamentOperationsScreen() {
   const { socket } = useSocket();
