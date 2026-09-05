@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  RefreshControl, ActivityIndicator, Alert, Modal, TextInput, Platform,
+  RefreshControl, ActivityIndicator, Alert, Modal, TextInput, Platform, useWindowDimensions,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../../context/AuthContext';
 import { COLORS } from '../../constants';
 
@@ -24,6 +25,8 @@ const STATUS_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   CANCELLED: 'close-circle-outline',
   COMPLETED: 'checkmark-done-circle',
 };
+
+const MIN_RESERVATION_DURATION_MS = 30 * 60 * 1000;
 
 // ─── DatePickerField ──────────────────────────────────────────────────────────
 const DatePickerField = ({
@@ -79,12 +82,15 @@ const DatePickerField = ({
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ReservationScreen() {
+  const { width: screenWidth } = useWindowDimensions();
+  const isNarrowHeader = screenWidth < 400;
   const [reservations, setReservations] = useState<any[]>([]);
   const [tables, setTables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [createModal, setCreateModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [policyModal, setPolicyModal] = useState(false);
 
   const defaultStart = new Date(Date.now() + 60 * 60 * 1000);
   const defaultEnd = new Date(Date.now() + 2 * 60 * 60 * 1000);
@@ -94,6 +100,7 @@ export default function ReservationScreen() {
     startTime: defaultStart,
     endTime: defaultEnd,
     notes: '',
+    paymentMethod: 'CREDITS',
   });
 
   const fetchData = useCallback(async () => {
@@ -127,7 +134,7 @@ export default function ReservationScreen() {
   const openCreateModal = () => {
     const start = new Date(Date.now() + 60 * 60 * 1000);
     const end = new Date(Date.now() + 2 * 60 * 60 * 1000);
-    setForm({ tableId: tables[0]?.id || '', startTime: start, endTime: end, notes: '' });
+    setForm({ tableId: tables[0]?.id || '', startTime: start, endTime: end, notes: '', paymentMethod: 'CREDITS' });
     setCreateModal(true);
   };
 
@@ -139,6 +146,30 @@ export default function ReservationScreen() {
       return Alert.alert('Invalid Time', 'Start time must be in the future.');
     if (form.endTime <= form.startTime)
       return Alert.alert('Invalid Time', 'End time must be after start time.');
+    if (form.endTime.getTime() - form.startTime.getTime() < MIN_RESERVATION_DURATION_MS)
+      return Alert.alert('Invalid Duration', 'Reservations must be at least 30 minutes.');
+
+    const table = tables.find((t) => t.id === form.tableId);
+    const estimatedCredits = table
+      ? Math.ceil((form.endTime.getTime() - form.startTime.getTime()) / 3600000 * table.ratePerHour)
+      : 0;
+
+    // Reject on user side if credits are insufficient (backend also enforces this).
+    if (form.paymentMethod !== 'CASH') {
+      try {
+        const me = await api.get('/api/auth/me');
+        const balance = me.data?.membership?.creditBalance || 0;
+        if (!table) return Alert.alert('Error', 'Please select a table.');
+        if (balance < estimatedCredits) {
+          return Alert.alert(
+            'Insufficient Credits',
+            `You need at least ${estimatedCredits} credits for this reservation. Current balance: ${Math.floor(balance)}.`
+          );
+        }
+      } catch {
+        return Alert.alert('Error', 'Unable to check your credit balance. Please try again.');
+      }
+    }
 
     setSubmitting(true);
     try {
@@ -147,6 +178,7 @@ export default function ReservationScreen() {
         startTime: form.startTime.toISOString(),
         endTime: form.endTime.toISOString(),
         notes: form.notes.trim() || undefined,
+        paymentMethod: form.paymentMethod,
       });
       setCreateModal(false);
       fetchData();
@@ -160,19 +192,38 @@ export default function ReservationScreen() {
   };
 
   const selectedTable = tables.find((t) => t.id === form.tableId);
+  const cancelReservation = (reservation: any) => {
+    Alert.alert('Cancel reservation?', 'This will release the table. No cancellation fee applies under the current reservation rules.', [
+      { text: 'Keep reservation', style: 'cancel' },
+      { text: 'Cancel reservation', style: 'destructive', onPress: async () => {
+        try { await api.patch(`/api/reservations/${reservation.id}/cancel`); Alert.alert('Reservation cancelled', 'The table has been released and no cancellation fee was charged.'); fetchData(); }
+        catch (err: any) { Alert.alert('Could not cancel', err.response?.data?.error || 'Please try again.'); }
+      } },
+    ]);
+  };
+  const estimatedCost = selectedTable
+    ? Math.ceil((form.endTime.getTime() - form.startTime.getTime()) / 3600000 * selectedTable.ratePerHour)
+    : 0;
 
   if (loading) return (
     <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
   );
 
+  const reserveButton = (
+    <TouchableOpacity style={s.createBtn} onPress={openCreateModal}>
+      <Ionicons name="add" size={18} color="#000" />
+      <Text style={s.createBtnTxt}>Reserve</Text>
+    </TouchableOpacity>
+  );
+
   return (
-    <View style={s.container}>
-      <View style={s.header}>
-        <Text style={s.title}>📅 My Reservations</Text>
-        <TouchableOpacity style={s.createBtn} onPress={openCreateModal}>
-          <Ionicons name="add" size={18} color="#000" />
-          <Text style={s.createBtnTxt}>Reserve</Text>
-        </TouchableOpacity>
+    <SafeAreaView style={s.container} edges={['top']}>
+      <View style={[s.header, isNarrowHeader && s.headerNarrow]}>
+        <View style={s.headerTitleRow}>
+          <Ionicons name="calendar-outline" size={24} color={COLORS.textPrimary} />
+          <Text style={s.title}>My Reservations</Text>
+        </View>
+        {isNarrowHeader ? <View style={s.headerActionRow}>{reserveButton}</View> : reserveButton}
       </View>
 
       <ScrollView
@@ -223,12 +274,17 @@ export default function ReservationScreen() {
             {r.status === 'DECLINED' && r.declineNote ? (
               <Text style={s.cardDeclineNote}>❌ Reason: {r.declineNote}</Text>
             ) : null}
+            {['PENDING', 'APPROVED'].includes(r.status) && new Date(r.startTime) > new Date() ? (
+              <TouchableOpacity style={s.cancelReservationBtn} onPress={() => cancelReservation(r)}>
+                <Text style={s.cancelReservationTxt}>Cancel reservation</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         ))}
       </ScrollView>
 
       {/* ── Create Reservation Modal ── */}
-      <Modal visible={createModal} animationType="slide">
+      <Modal visible={createModal} animationType="slide" onRequestClose={() => !submitting && setCreateModal(false)}>
         <View style={s.modal}>
           <View style={s.modalHeader}>
             <TouchableOpacity onPress={() => setCreateModal(false)}>
@@ -272,11 +328,11 @@ export default function ReservationScreen() {
               label="Start Time"
               value={form.startTime}
               onChange={(d) => {
-                const newEnd = new Date(d.getTime() + 60 * 60 * 1000);
+                const minimumEnd = new Date(d.getTime() + MIN_RESERVATION_DURATION_MS);
                 setForm(f => ({
                   ...f,
                   startTime: d,
-                  endTime: f.endTime <= d ? newEnd : f.endTime,
+                  endTime: f.endTime < minimumEnd ? minimumEnd : f.endTime,
                 }));
               }}
               minimumDate={new Date()}
@@ -286,7 +342,7 @@ export default function ReservationScreen() {
               label="End Time"
               value={form.endTime}
               onChange={(d) => setForm(f => ({ ...f, endTime: d }))}
-              minimumDate={form.startTime}
+              minimumDate={new Date(form.startTime.getTime() + MIN_RESERVATION_DURATION_MS)}
             />
 
             {form.startTime < form.endTime && (
@@ -318,9 +374,25 @@ export default function ReservationScreen() {
               </Text>
             </View>
 
+            <Text style={s.fieldLabel}>Payment Method</Text>
+            <View style={s.creditsPayment}>
+              <Ionicons name="wallet-outline" size={18} color={COLORS.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.creditsPaymentTitle}>Credits</Text>
+                <Text style={s.creditsPaymentHint}>Your available Credits are checked before approval.</Text>
+              </View>
+            </View>
+
+            <View style={s.noticeCard}>
+              <Ionicons name="alert-circle-outline" size={16} color={COLORS.warning} />
+              <Text style={s.noticeTxt}>
+                Reserved play time starts at the scheduled reservation time. Late arrivals do not move the reservation window.
+              </Text>
+            </View>
+
             <TouchableOpacity
               style={[s.submitBtn, submitting && s.submitBtnDis]}
-              onPress={submitReservation}
+              onPress={() => setPolicyModal(true)}
               disabled={submitting}
             >
               {submitting
@@ -331,16 +403,47 @@ export default function ReservationScreen() {
           </ScrollView>
         </View>
       </Modal>
-    </View>
+
+      <Modal visible={policyModal} transparent animationType="fade" onRequestClose={() => setPolicyModal(false)}>
+        <View style={s.overlay}>
+          <View style={s.dialogBox}>
+            <Text style={s.dialogTitle}>Reservation Reminder</Text>
+            <Text style={s.dialogBody}>
+              Your reservation will begin at the exact scheduled time, even if you arrive late.
+            </Text>
+            <Text style={s.dialogBody}>
+              Estimated reservation cost: PHP {estimatedCost}. Staff can only approve this request if you have enough Credits.
+            </Text>
+            <View style={s.dialogActions}>
+              <TouchableOpacity style={s.dialogCancelBtn} onPress={() => setPolicyModal(false)}>
+                <Text style={s.dialogCancelTxt}>Back</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={s.dialogAgreeBtn}
+                onPress={() => {
+                  setPolicyModal(false);
+                  submitReservation();
+                }}
+              >
+                <Text style={s.dialogAgreeTxt}>I Understand</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },
-  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder },
+  header: { paddingTop: 16, paddingHorizontal: 20, paddingBottom: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder },
+  headerNarrow: { flexDirection: 'column', alignItems: 'stretch', gap: 10 },
+  headerTitleRow: { flex: 1, flexShrink: 0, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerActionRow: { alignItems: 'flex-end' },
   title: { fontSize: 22, fontWeight: '800', color: COLORS.textPrimary },
-  createBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.primary, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  createBtn: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.primary, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   createBtnTxt: { color: '#000', fontWeight: '700', fontSize: 13 },
   list: { padding: 16, gap: 12 },
   card: { backgroundColor: COLORS.surface, borderRadius: 16, padding: 16, gap: 8, borderWidth: 1, borderColor: COLORS.surfaceBorder },
@@ -353,6 +456,8 @@ const s = StyleSheet.create({
   cardMetaTxt: { fontSize: 13, color: COLORS.textSecondary },
   cardNotes: { fontSize: 12, color: COLORS.textMuted },
   cardDeclineNote: { fontSize: 12, color: COLORS.error },
+  cancelReservationBtn: { alignSelf: 'flex-start', marginTop: 4, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: COLORS.error + '80' },
+  cancelReservationTxt: { color: COLORS.error, fontSize: 12, fontWeight: '700' },
   empty: { padding: 60, alignItems: 'center', gap: 8 },
   emptyTxt: { fontSize: 16, fontWeight: '700', color: COLORS.textMuted },
   emptySubTxt: { fontSize: 13, color: COLORS.textMuted },
@@ -379,7 +484,19 @@ const s = StyleSheet.create({
   durationPreviewTxt: { fontSize: 12, color: COLORS.textMuted },
   noticeCard: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', backgroundColor: COLORS.info + '15', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: COLORS.info + '40' },
   noticeTxt: { flex: 1, fontSize: 13, color: COLORS.textSecondary, lineHeight: 20 },
+  creditsPayment: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.primary + '12', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: COLORS.primary + '50' },
+  creditsPaymentTitle: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '700' },
+  creditsPaymentHint: { color: COLORS.textSecondary, fontSize: 12, marginTop: 2 },
   submitBtn: { backgroundColor: COLORS.primary, borderRadius: 14, height: 52, justifyContent: 'center', alignItems: 'center', marginTop: 4 },
   submitBtnDis: { opacity: 0.5 },
   submitTxt: { color: '#000', fontWeight: '800', fontSize: 16 },
+  overlay: { flex: 1, backgroundColor: '#00000088', justifyContent: 'center', padding: 20 },
+  dialogBox: { backgroundColor: COLORS.surface, borderRadius: 18, padding: 20, gap: 12 },
+  dialogTitle: { fontSize: 17, fontWeight: '800', color: COLORS.textPrimary },
+  dialogBody: { fontSize: 14, color: COLORS.textSecondary, lineHeight: 21 },
+  dialogActions: { flexDirection: 'row', gap: 10 },
+  dialogCancelBtn: { flex: 1, height: 44, borderRadius: 10, borderWidth: 1, borderColor: COLORS.surfaceBorder, justifyContent: 'center', alignItems: 'center' },
+  dialogCancelTxt: { color: COLORS.textSecondary, fontWeight: '600' },
+  dialogAgreeBtn: { flex: 1, height: 44, borderRadius: 10, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
+  dialogAgreeTxt: { color: '#000', fontWeight: '800' },
 });

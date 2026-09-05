@@ -3,21 +3,42 @@ import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
 import { API_URL } from '../constants';
 
-// ─── API Instance ───
 export const api = axios.create({ baseURL: API_URL });
-console.log('API_URL is:', API_URL);
-// Auto-attach token to every request
+
+// Shared by Axios and the one native-fetch multipart request. Keeping token
+// retrieval here avoids a second storage/auth implementation in screens.
+export const getAccessToken = () => SecureStore.getItemAsync('accessToken');
+
+let authFailureHandler: null | (() => Promise<void>) = null;
+
+const clearStoredAuth = async () => {
+  await SecureStore.deleteItemAsync('accessToken');
+  await SecureStore.deleteItemAsync('refreshToken');
+  await SecureStore.deleteItemAsync('userRole');
+};
+
 api.interceptors.request.use(async (config) => {
-  const token = await SecureStore.getItemAsync('accessToken');
+  const token = await getAccessToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Auto-refresh token on 401
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config;
+
+    if (error.response?.status === 429) {
+      if (__DEV__) {
+        console.warn('[API] Request rate limited', {
+          method: original?.method?.toUpperCase(),
+          route: original?.url,
+          retryAfter: error.response?.headers?.['retry-after'],
+        });
+      }
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && error.response?.data?.code === 'TOKEN_EXPIRED' && !original._retry) {
       original._retry = true;
       try {
@@ -28,16 +49,15 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${data.accessToken}`;
         return api(original);
       } catch {
-        // Refresh failed - logout
-        await SecureStore.deleteItemAsync('accessToken');
-        await SecureStore.deleteItemAsync('refreshToken');
+        await clearStoredAuth();
+        if (authFailureHandler) await authFailureHandler();
       }
     }
+
     return Promise.reject(error);
   }
 );
 
-// ─── Auth Context ───
 interface User {
   id: string;
   email: string;
@@ -54,7 +74,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: RegisterData) => Promise<void>;
+  register: (data: RegisterData) => Promise<any>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -75,9 +95,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load stored user on app start
   useEffect(() => {
+    authFailureHandler = async () => setUser(null);
     loadStoredAuth();
+    return () => {
+      authFailureHandler = null;
+    };
   }, []);
 
   const loadStoredAuth = async () => {
@@ -85,11 +108,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const token = await SecureStore.getItemAsync('accessToken');
       if (token) {
         const { data } = await api.get('/api/auth/me');
+        await SecureStore.setItemAsync('userRole', data.role);
         setUser(data);
       }
-    } catch {
-      await SecureStore.deleteItemAsync('accessToken');
-      await SecureStore.deleteItemAsync('refreshToken');
+    } catch (error: any) {
+      if ([401, 403].includes(error.response?.status)) {
+        await clearStoredAuth();
+        setUser(null);
+      } else if (__DEV__) {
+        console.warn('[Auth] Could not restore the stored session', { status: error.response?.status });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -99,26 +127,31 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const { data } = await api.post('/api/auth/login', { email, password });
     await SecureStore.setItemAsync('accessToken', data.accessToken);
     await SecureStore.setItemAsync('refreshToken', data.refreshToken);
+    await SecureStore.setItemAsync('userRole', data.user.role);
     setUser(data.user);
   };
 
   const register = async (registerData: RegisterData) => {
     const { data } = await api.post('/api/auth/register', registerData);
-    await SecureStore.setItemAsync('accessToken', data.accessToken);
-    await SecureStore.setItemAsync('refreshToken', data.refreshToken);
-    setUser(data.user);
+    if (data.accessToken && data.refreshToken && data.user) {
+      await SecureStore.setItemAsync('accessToken', data.accessToken);
+      await SecureStore.setItemAsync('refreshToken', data.refreshToken);
+      await SecureStore.setItemAsync('userRole', data.user.role);
+      setUser(data.user);
+    }
+    return data;
   };
 
   const logout = async () => {
     const refreshToken = await SecureStore.getItemAsync('refreshToken');
     try { await api.post('/api/auth/logout', { refreshToken }); } catch {}
-    await SecureStore.deleteItemAsync('accessToken');
-    await SecureStore.deleteItemAsync('refreshToken');
+    await clearStoredAuth();
     setUser(null);
   };
 
   const refreshUser = async () => {
     const { data } = await api.get('/api/auth/me');
+    await SecureStore.setItemAsync('userRole', data.role);
     setUser(data);
   };
 

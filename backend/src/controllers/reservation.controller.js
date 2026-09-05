@@ -1,10 +1,29 @@
 const prisma = require('../config/prisma');
+const {
+  encodeReservationNotes,
+  parseReservationPaymentMethod,
+  mapReservationResponse,
+} = require('../utils/reservationMeta');
+
+const MIN_RESERVATION_DURATION_MS = 30 * 60 * 1000;
+const hasMinimumReservationDuration = (start, end) => end.getTime() - start.getTime() >= MIN_RESERVATION_DURATION_MS;
+const isOnlineReservationPaymentMethod = (paymentMethod) => !paymentMethod || paymentMethod === 'CREDITS';
+const reservationIntervalsOverlap = (requestedStart, requestedEnd, existingStart, existingEnd) =>
+  requestedStart < existingEnd && requestedEnd > existingStart;
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 const notify = async (userId, type, title, message, data = {}) => {
   try {
-    await prisma.notification.create({ data: { userId, type, title, message, data } });
+    let enhancedMessage = message;
+    if (data.reservationId && ['RESERVATION_SUBMITTED', 'RESERVATION_APPROVED'].includes(type)) {
+      const reservation = await prisma.reservation.findUnique({ where: { id: data.reservationId }, include: { table: true } });
+      if (reservation) {
+        const duration = Math.round((new Date(reservation.endTime) - new Date(reservation.startTime)) / 60000);
+        enhancedMessage += ` Duration: ${duration} minutes. Reference: ${reservation.id.slice(0, 8).toUpperCase()}.`;
+      }
+    }
+    await prisma.notification.create({ data: { userId, type, title, message: enhancedMessage, data, actionRoute: 'Reservations' } });
   } catch (err) {
     console.error('[Notify Error]', err.message);
   }
@@ -13,21 +32,25 @@ const notify = async (userId, type, title, message, data = {}) => {
 // ─── Member: Request a Reservation ───────────────────────────────────────────
 
 const requestReservation = async (req, res) => {
-  const { tableId, startTime, endTime, notes } = req.body;
+  const { tableId, startTime, endTime, notes, paymentMethod } = req.body;
 
   if (!tableId || !startTime || !endTime) {
     return res.status(400).json({ error: 'tableId, startTime, and endTime are required' });
+  }
+
+  if (!isOnlineReservationPaymentMethod(paymentMethod)) {
+    return res.status(400).json({ error: 'Cash payment is not available for online reservations. Please use Credits.' });
   }
 
   const start = new Date(startTime);
   const end = new Date(endTime);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    return res.status(400).json({ error: 'Invalid reservation dates' });
+    return res.status(400).json({ error: 'Reservation start and end times must be valid.' });
   }
 
-  // Validate dates are in the future, with a small buffer for timezone/skew
-  if (start < new Date(Date.now() - 60000)) {
+  // Validate dates are in the future
+  if (start <= new Date()) {
     return res.status(400).json({ error: 'Reservation start time must be in the future' });
   }
 
@@ -35,11 +58,28 @@ const requestReservation = async (req, res) => {
     return res.status(400).json({ error: 'End time must be after start time' });
   }
 
+  if (!hasMinimumReservationDuration(start, end)) {
+    return res.status(400).json({ error: 'Reservation duration must be at least 30 minutes.' });
+  }
+
   try {
     const table = await prisma.billiardTable.findUnique({ where: { id: tableId } });
     if (!table) return res.status(404).json({ error: 'Table not found' });
     if (table.status === 'MAINTENANCE') {
       return res.status(400).json({ error: 'This table is currently under maintenance' });
+    }
+
+    const selectedPaymentMethod = 'CREDITS';
+    const membership = await prisma.membership.findUnique({ where: { userId: req.user.id } });
+    const reservedMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+    const estimatedCost = (reservedMinutes / 60) * table.ratePerHour;
+
+    if (!membership || membership.creditBalance < estimatedCost) {
+      return res.status(400).json({
+        error: `Insufficient credits. You need at least ${estimatedCost.toFixed(0)} credits for this reservation.`,
+        estimatedCost: Number(estimatedCost.toFixed(2)),
+        creditBalance: membership?.creditBalance ?? 0,
+      });
     }
 
     // Check for overlapping APPROVED or PENDING reservations
@@ -66,7 +106,7 @@ const requestReservation = async (req, res) => {
         startTime: start,
         endTime: end,
         status: 'PENDING',
-        notes: notes || null,
+        notes: encodeReservationNotes(notes, selectedPaymentMethod),
       },
       include: {
         table: true,
@@ -77,7 +117,7 @@ const requestReservation = async (req, res) => {
     // Notify the member
     await notify(
       req.user.id,
-      'RESERVATION_PENDING',
+      'RESERVATION_SUBMITTED',
       '📋 Reservation Request Received',
       `Your request to reserve Table ${table.tableNumber} on ${start.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} is pending staff approval.`,
       { reservationId: reservation.id, tableId }
@@ -90,17 +130,18 @@ const requestReservation = async (req, res) => {
     await prisma.notification.createMany({
       data: staffAndAdmins.map((s) => ({
         userId: s.id,
-        type: 'RESERVATION_PENDING',
+        type: 'RESERVATION_SUBMITTED',
         title: '📋 New Reservation Request',
         message: `${reservation.user.firstName} ${reservation.user.lastName} requested Table ${table.tableNumber} on ${start.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}.`,
-        data: { reservationId: reservation.id },
+        data: { reservationId: reservation.id }, actionRoute: 'Reservations',
       })),
     });
 
     const io = req.app.get('io');
     io.to('staff-tablet').emit('reservation:new', reservation);
+    io.emit('queue:updated', { tableId });
 
-    res.status(201).json(reservation);
+    res.status(201).json(mapReservationResponse(reservation));
   } catch (err) {
     console.error('[Request Reservation Error]', err);
     res.status(500).json({ error: 'Failed to submit reservation request' });
@@ -121,6 +162,19 @@ const approveReservation = async (req, res) => {
     if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
     if (reservation.status !== 'PENDING') {
       return res.status(400).json({ error: `Reservation is already ${reservation.status.toLowerCase()}` });
+    }
+
+    const selectedPaymentMethod = parseReservationPaymentMethod(reservation.notes);
+    if (selectedPaymentMethod !== 'CASH') {
+      const membership = await prisma.membership.findUnique({ where: { userId: reservation.userId } });
+      const reservedMinutes = Math.max(0, Math.round((new Date(reservation.endTime).getTime() - new Date(reservation.startTime).getTime()) / 60000));
+      const estimatedCost = (reservedMinutes / 60) * reservation.table.ratePerHour;
+
+      if (!membership || membership.creditBalance < estimatedCost) {
+        return res.status(400).json({
+          error: `Cannot approve reservation. Member needs at least ${estimatedCost.toFixed(0)} credits.`,
+        });
+      }
     }
 
     const updated = await prisma.reservation.update({
@@ -152,8 +206,9 @@ const approveReservation = async (req, res) => {
 
     const io = req.app.get('io');
     io.to('staff-tablet').emit('reservation:updated', updated);
+    io.emit('queue:updated', { tableId: reservation.tableId });
 
-    res.json({ message: 'Reservation approved', reservation: updated });
+    res.json({ message: 'Reservation approved', reservation: mapReservationResponse(updated) });
   } catch (err) {
     console.error('[Approve Reservation Error]', err);
     res.status(500).json({ error: 'Failed to approve reservation' });
@@ -207,8 +262,9 @@ const declineReservation = async (req, res) => {
 
     const io = req.app.get('io');
     io.to('staff-tablet').emit('reservation:updated', updated);
+    io.emit('queue:updated', { tableId: reservation.tableId });
 
-    res.json({ message: 'Reservation declined', reservation: updated });
+    res.json({ message: 'Reservation declined', reservation: mapReservationResponse(updated) });
   } catch (err) {
     console.error('[Decline Reservation Error]', err);
     res.status(500).json({ error: 'Failed to decline reservation' });
@@ -217,6 +273,25 @@ const declineReservation = async (req, res) => {
 
 // ─── Get My Reservations (Member) ────────────────────────────────────────────
 
+const cancelMyReservation = async (req, res) => {
+  const { reservationId } = req.params;
+  try {
+    const reservation = await prisma.reservation.findFirst({ where: { id: reservationId, userId: req.user.id }, include: { table: true } });
+    if (!reservation) return res.status(404).json({ error: 'Reservation not found.' });
+    if (!['PENDING', 'APPROVED'].includes(reservation.status)) return res.status(409).json({ error: `This reservation cannot be cancelled because it is ${reservation.status.toLowerCase()}.` });
+    if (new Date(reservation.startTime) <= new Date()) return res.status(409).json({ error: 'Reservations cannot be cancelled once the booked time has started.' });
+    const updated = await prisma.reservation.update({ where: { id: reservationId }, data: { status: 'CANCELLED' } });
+    await notify(req.user.id, 'RESERVATION_CANCELLED', 'Reservation cancelled', `Your Table ${reservation.table.tableNumber} reservation has been cancelled. No cancellation fee applies under the current reservation rules.`, { reservationId, tableId: reservation.tableId });
+    const io = req.app.get('io');
+    io.to('staff-tablet').emit('reservation:updated', updated);
+    io.emit('queue:updated', { tableId: reservation.tableId });
+    res.json({ message: 'Reservation cancelled. No cancellation fee applies.', reservation: mapReservationResponse(updated) });
+  } catch (err) {
+    console.error('[Cancel Reservation Error]', err);
+    res.status(500).json({ error: 'Could not cancel this reservation.' });
+  }
+};
+
 const getMyReservations = async (req, res) => {
   try {
     const reservations = await prisma.reservation.findMany({
@@ -224,7 +299,7 @@ const getMyReservations = async (req, res) => {
       include: { table: true },
       orderBy: { startTime: 'desc' },
     });
-    res.json(reservations);
+    res.json(reservations.map(mapReservationResponse));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch reservations' });
   }
@@ -247,7 +322,7 @@ const getPendingReservations = async (req, res) => {
       },
       orderBy: { createdAt: 'asc' },
     });
-    res.json(reservations);
+    res.json(reservations.map(mapReservationResponse));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch pending reservations' });
   }
@@ -282,16 +357,21 @@ const getAllReservations = async (req, res) => {
       },
       orderBy: { startTime: 'asc' },
     });
-    res.json(reservations);
+    res.json(reservations.map(mapReservationResponse));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch reservations' });
   }
 };
 
 module.exports = {
+  MIN_RESERVATION_DURATION_MS,
+  hasMinimumReservationDuration,
+  isOnlineReservationPaymentMethod,
+  reservationIntervalsOverlap,
   requestReservation,
   approveReservation,
   declineReservation,
+  cancelMyReservation,
   getMyReservations,
   getPendingReservations,
   getAllReservations,

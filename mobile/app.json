@@ -2,6 +2,7 @@
   "expo": {
     "name": "Saturday Nights Billiard",
     "slug": "saturday-nights",
+    "scheme": "saturdaynights",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -19,7 +20,14 @@
       }
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Saturday Nights Billiard to select QR codes and payment receipt screenshots.",
+          "cameraPermission": "Allow Saturday Nights Billiard to take payment receipt photos."
+        }
+      ]
     ],
     "extra": {
       "eas": {

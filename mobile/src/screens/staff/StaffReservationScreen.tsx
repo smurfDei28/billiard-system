@@ -4,7 +4,9 @@ import {
   RefreshControl, ActivityIndicator, Alert, Modal, TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { COLORS } from '../../constants';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -15,7 +17,16 @@ const STATUS_COLORS: Record<string, string> = {
   COMPLETED: COLORS.info,
 };
 
+const STATUS_ORDER: Record<string, number> = {
+  PENDING: 0,
+  APPROVED: 1,
+  COMPLETED: 2,
+  CANCELLED: 3,
+  DECLINED: 4,
+};
+
 export default function StaffReservationScreen() {
+  const { socket, joinStaff } = useSocket();
   const [reservations, setReservations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,7 +46,21 @@ export default function StaffReservationScreen() {
     finally { setLoading(false); setRefreshing(false); }
   }, [filter]);
 
-  useEffect(() => { fetchReservations(); }, [filter]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchReservations();
+    }, [fetchReservations])
+  );
+
+  useEffect(() => {
+    joinStaff();
+    socket?.on('reservation:new', fetchReservations);
+    socket?.on('reservation:updated', fetchReservations);
+    return () => {
+      socket?.off('reservation:new', fetchReservations);
+      socket?.off('reservation:updated', fetchReservations);
+    };
+  }, [socket, fetchReservations]);
 
   const approveReservation = async (id: string, memberName: string) => {
     Alert.alert(
@@ -105,7 +130,10 @@ export default function StaffReservationScreen() {
             <Text style={s.emptyTxt}>{filter === 'PENDING' ? 'No pending reservations 🎉' : 'No reservations found.'}</Text>
           </View>
         )}
-        {reservations.map((r: any) => (
+        {[...reservations].sort((left, right) => {
+          const statusDifference = (STATUS_ORDER[left.status] ?? 99) - (STATUS_ORDER[right.status] ?? 99);
+          return statusDifference || new Date(left.startTime).getTime() - new Date(right.startTime).getTime();
+        }).map((r: any) => (
           <View key={r.id} style={s.card}>
             <View style={s.cardTop}>
               <View style={s.memberInfo}>
@@ -131,6 +159,20 @@ export default function StaffReservationScreen() {
                 {new Date(r.startTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
                 {' → '}
                 {new Date(r.endTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+              </Text>
+            </View>
+
+            <View style={s.timeInfo}>
+              <Ionicons name="wallet-outline" size={14} color={COLORS.textMuted} />
+              <Text style={s.timeInfoTxt}>
+                Payment: {r.paymentMethod === 'CASH' ? 'Cash — Pay at Counter' : 'Credits'}
+              </Text>
+            </View>
+
+            <View style={s.timeInfo}>
+              <Ionicons name="document-text-outline" size={14} color={COLORS.textMuted} />
+              <Text style={s.timeInfoTxt}>
+                Requested: {new Date(r.createdAt).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </Text>
             </View>
 
@@ -161,7 +203,7 @@ export default function StaffReservationScreen() {
       </ScrollView>
 
       {/* Decline Modal */}
-      <Modal visible={!!declineModal} transparent animationType="fade">
+      <Modal visible={!!declineModal} transparent animationType="fade" onRequestClose={() => !actionLoading && setDeclineModal(null)}>
         <View style={s.overlay}>
           <View style={s.dialogBox}>
             <Text style={s.dialogTitle}>Decline Reservation</Text>

@@ -2,12 +2,18 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../config/prisma');
 const { authenticate, authorize } = require('../middleware/auth.middleware');
+const { settlePendingCancellationFees } = require('../utils/cancellationFees');
 
 // Staff adds credits to a member's account
 router.post('/topup', authenticate, authorize('STAFF', 'ADMIN'), async (req, res) => {
-  const { userId, amount, paymentMethod, referenceNo } = req.body;
-  if (!userId || !amount || amount <= 0) {
-    return res.status(400).json({ error: 'userId and positive amount are required' });
+  const { userId, amount, paymentMethod } = req.body;
+  const parsedAmount = Number(amount);
+  if (!userId || !Number.isInteger(parsedAmount) || parsedAmount <= 0) {
+    return res.status(400).json({ error: 'userId and a positive whole-number amount are required' });
+  }
+
+  if (paymentMethod !== 'CASH') {
+    return res.status(400).json({ error: 'Staff credit top-ups must use cash payment' });
   }
 
   try {
@@ -17,28 +23,44 @@ router.post('/topup', authenticate, authorize('STAFF', 'ADMIN'), async (req, res
     const updated = await prisma.$transaction(async (tx) => {
       const mem = await tx.membership.update({
         where: { userId },
-        data: { creditBalance: { increment: amount } },
+        data: {
+          creditBalance: { increment: parsedAmount },
+        },
       });
       await tx.creditTransaction.create({
         data: {
           userId,
           type: 'TOPUP',
-          amount,
+          amount: parsedAmount,
           balanceBefore: membership.creditBalance,
           balanceAfter: mem.creditBalance,
           description: `Credit top-up by staff`,
-          paymentMethod: paymentMethod || 'CASH',
-          referenceNo: referenceNo || null,
+          paymentMethod: 'CASH',
+          referenceNo: null,
           staffId: req.user.id,
         },
       });
-      await tx.staffAction.create({
-        data: { staffId: req.user.id, action: 'CREDIT_TOPUP', targetId: userId, details: { amount, paymentMethod } },
+      const settlement = await settlePendingCancellationFees(tx, userId, req.user.id);
+      await tx.notification.create({
+        data: {
+          userId,
+          type: 'TOPUP_SUCCESS',
+          title: 'Top-up Successful',
+          message: `Your account has been credited with ${parsedAmount} credits. New balance: ${settlement.balance ?? mem.creditBalance} credits.`,
+          data: {
+            amount: parsedAmount,
+            balance: settlement.balance ?? mem.creditBalance,
+            paymentMethod: 'CASH',
+          },
+        },
       });
-      return mem;
+      await tx.staffAction.create({
+        data: { staffId: req.user.id, action: 'CREDIT_TOPUP', targetId: userId, details: { amount: parsedAmount, paymentMethod: 'CASH' } },
+      });
+      return { membership: mem, settlement };
     });
 
-    res.json({ message: `Added ${amount} credits`, balance: updated.creditBalance });
+    res.json({ message: `Added ${amount} credits`, balance: updated.settlement.balance ?? updated.membership.creditBalance, cancellationFeesPaid: updated.settlement.paid });
   } catch (err) {
     res.status(500).json({ error: 'Top-up failed' });
   }

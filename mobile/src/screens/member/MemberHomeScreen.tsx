@@ -1,44 +1,56 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
-  TouchableOpacity, RefreshControl, ActivityIndicator,
+  TouchableOpacity, RefreshControl, ActivityIndicator, Modal
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../context/AuthContext';
-import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS } from '../../constants';
+import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS, rankProgressForXp } from '../../constants';
+import { formatCredits, normalizeCreditBalance } from '../../utils/credits';
 
 export default function MemberHomeScreen({ navigation }: any) {
-  const { user, refreshUser } = useAuth();
+  const { user } = useAuth();
   const [membership, setMembership] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [tables, setTables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedNotif, setSelectedNotif] = useState<any | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const refreshInFlight = useRef<Promise<void> | null>(null);
 
   const fetchData = useCallback(async () => {
-    try {
-      const [profileRes, notifRes, tablesRes] = await Promise.all([
-        api.get('/api/auth/me'),
-        api.get('/api/notifications'),
-        api.get('/api/tables'),
-      ]);
-      setMembership(profileRes.data.membership);
-      setProfile(profileRes.data.gamifiedProfile);
-      setNotifications(notifRes.data.filter((n: any) => !n.isRead).slice(0, 3));
-      setTables(tablesRes.data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const request = (async () => {
+      try {
+        const [profileRes, notifRes, tablesRes] = await Promise.all([
+          api.get('/api/auth/me'),
+          api.get('/api/notifications'),
+          api.get('/api/tables'),
+        ]);
+        setMembership(profileRes.data.membership);
+        setProfile(profileRes.data.gamifiedProfile);
+        setNotifications(notifRes.data.filter((n: any) => !n.isRead).slice(0, 3));
+        setTables(tablesRes.data);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    })();
+    refreshInFlight.current = request;
+    try { await request; } finally {
+      if (refreshInFlight.current === request) refreshInFlight.current = null;
     }
   }, []);
 
   useEffect(() => { fetchData(); }, []);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
 
-  const onRefresh = () => { setRefreshing(true); fetchData(); };
+  const onRefresh = async () => { setRefreshing(true); await fetchData(); };
 
   if (loading) {
     return (
@@ -52,10 +64,17 @@ export default function MemberHomeScreen({ navigation }: any) {
   const rankConfig = RANK_CONFIG[rank as keyof typeof RANK_CONFIG] || RANK_CONFIG.Rookie;
   const plan = membership?.plan || 'BASIC';
   const planConfig = MEMBERSHIP_PLANS[plan as keyof typeof MEMBERSHIP_PLANS];
-  const xpToNext = (profile?.level || 1) * 100;
-  const xpProgress = ((profile?.xp || 0) % 100) / 100;
+  const creditBalance = normalizeCreditBalance(membership?.creditBalance);
+  const formattedCreditBalance = formatCredits(creditBalance);
+  const rankProgress = rankProgressForXp(profile?.xp || 0);
+  const xpToNext = rankProgress.next?.minXp;
+  const xpProgress = rankProgress.progress;
   const availableTables = tables.filter((t: any) => t.status === 'AVAILABLE').length;
   const unreadCount = notifications.length;
+  const activeSession = tables.flatMap((table: any) => (table.sessions || []).map((session: any) => ({ ...session, table }))).find((session: any) => session.user?.id === user?.id);
+  const elapsedMinutes = activeSession ? Math.max(0, (now - new Date(activeSession.startTime).getTime()) / 60000) : 0;
+  const currentSessionCost = activeSession ? Math.round((activeSession.table.ratePerHour * Math.max(30, elapsedMinutes) / 60) * 100) / 100 : 0;
+  const effectiveRemaining = activeSession ? Math.max(0, normalizeCreditBalance(membership?.creditBalance) - Math.max(0, currentSessionCost - Number(activeSession.creditsUsed || 0))) : null;
 
   return (
     <ScrollView
@@ -69,7 +88,7 @@ export default function MemberHomeScreen({ navigation }: any) {
           <Text style={styles.greeting}>Good {getTimeOfDay()},</Text>
           <Text style={styles.name}>{user?.firstName} {user?.lastName}</Text>
         </View>
-        <TouchableOpacity style={styles.notifBtn}>
+        <TouchableOpacity style={styles.notifBtn} onPress={() => navigation.navigate('Notifications')}>
           <Ionicons name="notifications-outline" size={22} color={COLORS.textPrimary} />
           {unreadCount > 0 && (
             <View style={styles.notifBadge}>
@@ -112,7 +131,7 @@ export default function MemberHomeScreen({ navigation }: any) {
         <View style={styles.xpSection}>
           <View style={styles.xpRow}>
             <Text style={styles.xpLabel}>XP Progress</Text>
-            <Text style={styles.xpValue}>{profile?.xp || 0} / {xpToNext} XP</Text>
+            <Text style={styles.xpValue}>{xpToNext ? `${profile?.xp || 0} / ${xpToNext} XP` : 'Max rank'}</Text>
           </View>
           <View style={styles.xpBar}>
             <View style={[styles.xpFill, { width: `${xpProgress * 100}%`, backgroundColor: rankConfig.color }]} />
@@ -124,17 +143,27 @@ export default function MemberHomeScreen({ navigation }: any) {
       <View style={styles.creditsCard}>
         <View style={styles.creditsLeft}>
           <Ionicons name="wallet-outline" size={24} color={COLORS.primary} />
-          <View>
+          <View style={styles.creditsText}>
             <Text style={styles.creditsLabel}>Available Credits</Text>
-            <Text style={styles.creditsValue}>{membership?.creditBalance?.toFixed(0) || 0}</Text>
-            <Text style={styles.creditsSubLabel}>≈ {Math.floor((membership?.creditBalance || 0) / 60)}h {Math.round((membership?.creditBalance || 0) % 60)}m playtime</Text>
+            <Text style={styles.creditsValue}>{formattedCreditBalance}</Text>
+            <Text style={styles.creditsSubLabel}>1 credit = PHP 1 in playing value</Text>
           </View>
         </View>
         <View style={[styles.planBadge, { backgroundColor: planConfig?.color + '20' }]}>
           <Text style={styles.planIcon}>{planConfig?.icon}</Text>
-          <Text style={[styles.planLabel, { color: planConfig?.color }]}>{planConfig?.label}</Text>
+          <Text numberOfLines={2} style={[styles.planLabel, { color: planConfig?.color }]}>{planConfig?.label}</Text>
         </View>
       </View>
+
+      {activeSession && (
+        <View style={styles.activeSessionCard}>
+          <Text style={styles.activeSessionTitle}>Active Session · Table {activeSession.table.tableNumber}</Text>
+          <Text style={styles.activeSessionText}>{activeSession.table.type} · {activeSession.table.ratePerHour} credits/hour · 30-minute minimum</Text>
+          <Text style={styles.activeSessionText}>Playing: {Math.floor(elapsedMinutes)}m {Math.floor((elapsedMinutes % 1) * 60)}s</Text>
+          <Text style={styles.activeSessionCost}>Current cost: {currentSessionCost.toFixed(2)} credits</Text>
+          <Text style={styles.activeSessionText}>Effective remaining: {effectiveRemaining?.toFixed(2)} credits</Text>
+        </View>
+      )}
 
       {/* Table Status */}
       <View style={styles.sectionHeader}>
@@ -171,10 +200,11 @@ export default function MemberHomeScreen({ navigation }: any) {
       {/* Quick Actions */}
       <Text style={styles.sectionTitle}>Quick Actions</Text>
       <View style={styles.quickActions}>
-        <QuickAction icon="trophy-outline" label="Tournaments" color={COLORS.gold} onPress={() => {}} />
-        <QuickAction icon="time-outline" label="Join Queue" color={COLORS.primary} onPress={() => {}} />
-        <QuickAction icon="star-outline" label="My Loyalty" color={COLORS.rankElite} onPress={() => {}} />
-        <QuickAction icon="person-outline" label="Profile" color={COLORS.info} onPress={() => {}} />
+        <QuickAction icon="trophy-outline" label="Tournaments" color={COLORS.gold} onPress={() => navigation.navigate('Tournaments')} />
+        <QuickAction icon="time-outline" label="Reservation Queue" color={COLORS.primary} onPress={() => navigation.navigate('Queue')} />
+        <QuickAction icon="star-outline" label="My Loyalty" color={COLORS.rankElite} onPress={() => navigation.navigate('Profile', { initialTab: 'loyalty' })} />
+        <QuickAction icon="cart-outline" label="Shop" color={COLORS.success} onPress={() => navigation.navigate('Shop')} />
+        <QuickAction icon="person-outline" label="Profile" color={COLORS.info} onPress={() => navigation.navigate('Profile', { initialTab: 'stats' })} />
       </View>
 
       {/* Notifications */}
@@ -182,13 +212,27 @@ export default function MemberHomeScreen({ navigation }: any) {
         <>
           <Text style={[styles.sectionTitle, { marginTop: 8 }]}>Recent Notifications</Text>
           {notifications.map((n: any) => (
-            <View key={n.id} style={styles.notifCard}>
+            <TouchableOpacity key={n.id} style={styles.notifCard} onPress={() => setSelectedNotif(n)} activeOpacity={0.85}>
               <Text style={styles.notifTitle}>{n.title}</Text>
-              <Text style={styles.notifMsg}>{n.message}</Text>
-            </View>
+              <Text style={styles.notifMsg} numberOfLines={2}>{n.message}</Text>
+            </TouchableOpacity>
           ))}
         </>
       )}
+
+      <Modal visible={!!selectedNotif} transparent animationType="fade" onRequestClose={() => setSelectedNotif(null)}>
+        <View style={styles.notifOverlay}>
+          <View style={styles.notifModal}>
+            <Text style={styles.notifModalTitle}>{selectedNotif?.title}</Text>
+            <ScrollView style={{ maxHeight: 280 }}>
+              <Text style={styles.notifModalMsg}>{selectedNotif?.message}</Text>
+            </ScrollView>
+            <TouchableOpacity style={styles.notifCloseBtn} onPress={() => setSelectedNotif(null)}>
+              <Text style={styles.notifCloseTxt}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -251,16 +295,21 @@ const styles = StyleSheet.create({
   creditsCard: {
     backgroundColor: COLORS.surface, borderRadius: 16,
     padding: 16, marginBottom: 20,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: 12,
     borderWidth: 1, borderColor: COLORS.primary + '30',
   },
-  creditsLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  creditsLeft: { flex: 1, minWidth: 0, flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  creditsText: { flex: 1, minWidth: 0, flexShrink: 1 },
   creditsLabel: { fontSize: 12, color: COLORS.textMuted },
-  creditsValue: { fontSize: 28, fontWeight: '800', color: COLORS.primary },
-  creditsSubLabel: { fontSize: 11, color: COLORS.textMuted },
-  planBadge: { alignItems: 'center', padding: 8, borderRadius: 10, gap: 2 },
+  creditsValue: { flexShrink: 1, fontSize: 28, fontWeight: '800', color: COLORS.primary },
+  creditsSubLabel: { flexShrink: 1, fontSize: 11, color: COLORS.textMuted },
+  activeSessionCard: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.primary + '55', borderRadius: 16, padding: 16, marginBottom: 20, gap: 5 },
+  activeSessionTitle: { color: COLORS.primary, fontSize: 15, fontWeight: '800' },
+  activeSessionText: { color: COLORS.textSecondary, fontSize: 12 },
+  activeSessionCost: { color: COLORS.textPrimary, fontWeight: '800', fontSize: 14 },
+  planBadge: { flexShrink: 0, maxWidth: 88, alignItems: 'center', paddingHorizontal: 8, paddingVertical: 8, borderRadius: 10, gap: 2 },
   planIcon: { fontSize: 18 },
-  planLabel: { fontSize: 10, fontWeight: '700' },
+  planLabel: { fontSize: 10, fontWeight: '700', textAlign: 'center' },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 12 },
   sectionSub: { fontSize: 12, color: COLORS.textMuted },
@@ -296,4 +345,10 @@ const styles = StyleSheet.create({
   },
   notifTitle: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 2 },
   notifMsg: { fontSize: 12, color: COLORS.textSecondary },
+  notifOverlay: { flex: 1, backgroundColor: '#000000AA', justifyContent: 'center', padding: 20 },
+  notifModal: { backgroundColor: COLORS.surface, borderRadius: 16, padding: 16, gap: 10, borderWidth: 1, borderColor: COLORS.surfaceBorder },
+  notifModalTitle: { fontSize: 16, fontWeight: '800', color: COLORS.textPrimary },
+  notifModalMsg: { fontSize: 13, color: COLORS.textSecondary, lineHeight: 20 },
+  notifCloseBtn: { height: 44, borderRadius: 12, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
+  notifCloseTxt: { color: '#000', fontWeight: '800' },
 });

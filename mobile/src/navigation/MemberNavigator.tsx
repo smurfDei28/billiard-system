@@ -8,12 +8,19 @@ import ProfileScreen from '../screens/member/ProfileScreen';
 import TournamentListScreen from '../screens/member/TournamentListScreen';
 import QueueScreen from '../screens/member/QueueScreen';
 import NotificationsScreen from '../screens/member/NotificationsScreen';
+import ManualPaymentScreen from '../screens/member/ManualPaymentScreen';
+import ShopScreen from '../screens/member/ShopScreen';
+import MyOrdersScreen, { OrderDetailScreen } from '../screens/member/MyOrdersScreen';
+import { useFeatures } from '../context/FeatureContext';
+import ModuleLandingScreen from '../screens/ModuleLandingScreen';
 
 const Tab = createBottomTabNavigator();
 
 export default function MemberNavigator() {
+  const { hasModule } = useFeatures();
   return (
     <Tab.Navigator
+      backBehavior="history"
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
@@ -35,6 +42,8 @@ export default function MemberNavigator() {
             Queue: focused ? 'time' : 'time-outline',
             Notifications: focused ? 'notifications' : 'notifications-outline',
             Reservations: focused ? 'calendar' : 'calendar-outline',
+            Payments: focused ? 'card' : 'card-outline',
+            Shop: focused ? 'cart' : 'cart-outline',
           };
           // Safe fallback using a known valid Ionicons name
           const iconName = icons[route.name] ?? 'ellipse-outline';
@@ -42,12 +51,16 @@ export default function MemberNavigator() {
         },
       })}
     >
-      <Tab.Screen name="Home" component={MemberHomeScreen} />
-      <Tab.Screen name="Tournaments" component={TournamentListScreen} />
-      <Tab.Screen name="Queue" component={QueueScreen} />
-      <Tab.Screen name="Reservations" component={ReservationScreen} />
-      <Tab.Screen name="Notifications" component={NotificationsScreen} />
+      <Tab.Screen name="Home" component={hasModule('TABLE_MANAGEMENT') && hasModule('CREDITS_PAYMENTS') ? MemberHomeScreen : ModuleLandingScreen} />
+      {hasModule('POS_INVENTORY') && <Tab.Screen name="Shop" component={ShopScreen} />}
+      {hasModule('RESERVATIONS') && <Tab.Screen name="Queue" component={QueueScreen} />}
+      {hasModule('RESERVATIONS') && <Tab.Screen name="Reservations" component={ReservationScreen} />}
       <Tab.Screen name="Profile" component={ProfileScreen} />
+      {hasModule('TOURNAMENTS') && <Tab.Screen name="Tournaments" component={TournamentListScreen} options={{ tabBarButton: () => null }} />}
+      {hasModule('CREDITS_PAYMENTS') && <Tab.Screen name="Payments" component={ManualPaymentScreen} options={{ tabBarButton: () => null }} />}
+      {hasModule('NOTIFICATIONS') && <Tab.Screen name="Notifications" component={NotificationsScreen} options={{ tabBarButton: () => null }} />}
+      {hasModule('POS_INVENTORY') && <Tab.Screen name="Orders" component={MyOrdersScreen} options={{ tabBarButton: () => null }} />}
+      {hasModule('POS_INVENTORY') && <Tab.Screen name="OrderDetail" component={OrderDetailScreen} options={{ tabBarButton: () => null }} />}
     </Tab.Navigator>
   );
 }

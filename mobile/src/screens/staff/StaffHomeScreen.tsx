@@ -3,12 +3,29 @@ import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   RefreshControl, Alert, ActivityIndicator, Modal, TextInput,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../../context/AuthContext';
+import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { COLORS } from '../../constants';
 
-export default function StaffHomeScreen() {
+const resolveExpectedEndTime = (start: Date, selectedClockTime: Date) => {
+  const expectedEnd = new Date(start);
+  expectedEnd.setHours(selectedClockTime.getHours(), selectedClockTime.getMinutes(), 0, 0);
+  if (expectedEnd <= start) expectedEnd.setDate(expectedEnd.getDate() + 1);
+  return expectedEnd;
+};
+const formatExpectedEnd = (start: string | Date, end: string | Date) => {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  const time = endDate.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
+  return startDate.toDateString() === endDate.toDateString() ? time : `${time} (Next Day)`;
+};
+
+export default function StaffHomeScreen({ navigation }: any) {
+  const { logout } = useAuth();
   const { socket, joinStaff } = useSocket();
   const [tables, setTables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17,21 +34,12 @@ export default function StaffHomeScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [searchMember, setSearchMember] = useState('');
   const [foundMember, setFoundMember] = useState<any>(null);
+  const [memberResults, setMemberResults] = useState<any[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
-
-  useEffect(() => {
-    joinStaff();
-    fetchTables();
-
-    // Real-time updates
-    socket?.on('table:updated', (data: any) => {
-      setTables((prev) =>
-        prev.map((t) => t.id === data.tableId ? { ...t, ...data } : t)
-      );
-    });
-
-    return () => { socket?.off('table:updated'); };
-  }, [socket]);
+  const [walkInEndModal, setWalkInEndModal] = useState(false);
+  const [walkInStartTime, setWalkInStartTime] = useState(new Date());
+  const [expectedEndTime, setExpectedEndTime] = useState(new Date(Date.now() + 60 * 60 * 1000));
+  const [showExpectedEndPicker, setShowExpectedEndPicker] = useState(false);
 
   const fetchTables = useCallback(async () => {
     try {
@@ -45,32 +53,82 @@ export default function StaffHomeScreen() {
     }
   }, []);
 
+  useEffect(() => {
+    joinStaff();
+
+    const updateTable = (data: any) => {
+      setTables((prev) =>
+        prev.map((t) => t.id === data.tableId ? { ...t, ...data } : t)
+      );
+    };
+    socket?.on('table:updated', updateTable);
+    socket?.on('reservation:new', fetchTables);
+    socket?.on('reservation:updated', fetchTables);
+
+    return () => {
+      socket?.off('table:updated', updateTable);
+      socket?.off('reservation:new', fetchTables);
+      socket?.off('reservation:updated', fetchTables);
+    };
+  }, [socket, fetchTables]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchTables();
+    }, [fetchTables])
+  );
+
+  // Typeahead member search (username/displayName, name, email, phone)
+  useEffect(() => {
+    if (!modalVisible) return;
+    const q = searchMember.trim();
+    if (!q) {
+      setMemberResults([]);
+      return;
+    }
+
+    const handle = setTimeout(async () => {
+      try {
+        const res = await api.get(`/api/users/search?q=${encodeURIComponent(q)}&role=MEMBER`);
+        setMemberResults(Array.isArray(res.data) ? res.data : []);
+      } catch {
+        // ignore
+      }
+    }, 250);
+
+    return () => clearTimeout(handle);
+  }, [searchMember, modalVisible]);
+
   const searchMemberByEmail = async () => {
     if (!searchMember.trim()) return;
     try {
-      const res = await api.get('/api/users');
-      const found = res.data.find((u: any) =>
-        u.email.toLowerCase().includes(searchMember.toLowerCase()) ||
-        `${u.firstName} ${u.lastName}`.toLowerCase().includes(searchMember.toLowerCase())
-      );
-      setFoundMember(found || null);
-      if (!found) Alert.alert('Not Found', 'No member found with that email or name');
+      const res = await api.get(`/api/users/search?q=${encodeURIComponent(searchMember.trim())}&role=MEMBER`);
+      const results = Array.isArray(res.data) ? res.data : [];
+      setMemberResults(results);
+      if (results.length === 1) {
+        setFoundMember(results[0]);
+        setMemberResults([]);
+      } else if (results.length === 0) {
+        Alert.alert('Not Found', 'No member found for that search.');
+      }
     } catch {
       Alert.alert('Error', 'Search failed');
     }
   };
 
-  const startSession = async (isWalkin: boolean) => {
+  const startSession = async (isWalkin: boolean, expectedEnd?: Date) => {
     if (!selectedTable) return;
     setActionLoading(true);
     try {
       await api.post(`/api/tables/${selectedTable.id}/session/start`, {
         userId: !isWalkin ? foundMember?.id : null,
         isWalkin,
+        expectedEndTime: isWalkin ? expectedEnd?.toISOString() : undefined,
       });
       setModalVisible(false);
       setFoundMember(null);
       setSearchMember('');
+      setWalkInEndModal(false);
       fetchTables();
       Alert.alert('✅ Session Started', `Table ${selectedTable.tableNumber} is now occupied`);
     } catch (err: any) {
@@ -78,6 +136,23 @@ export default function StaffHomeScreen() {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const openWalkInEndModal = () => {
+    const start = new Date();
+    setWalkInStartTime(start);
+    setExpectedEndTime(new Date(start.getTime() + 60 * 60 * 1000));
+    setModalVisible(false);
+    setWalkInEndModal(true);
+  };
+
+  const confirmWalkInSession = () => {
+    const minimumEnd = walkInStartTime.getTime() + 30 * 60 * 1000;
+    if (expectedEndTime.getTime() < minimumEnd) {
+      Alert.alert('Invalid Expected End', 'Walk-in sessions must be at least 30 minutes.');
+      return;
+    }
+    startSession(true, expectedEndTime);
   };
 
   const endSession = async (table: any) => {
@@ -125,11 +200,43 @@ export default function StaffHomeScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>🎱 Table Management</Text>
-        <Text style={styles.subtitle}>
-          {tables.filter((t) => t.status === 'AVAILABLE').length} available •{' '}
-          {tables.filter((t) => t.status === 'OCCUPIED').length} occupied
-        </Text>
+        <View style={styles.headerRow}>
+          <View style={styles.headerTitleGroup}>
+            <Text style={styles.title}>🎱 Table Management</Text>
+            <Text style={styles.subtitle}>
+              {tables.filter((t) => t.status === 'AVAILABLE').length} available •{' '}
+              {tables.filter((t) => t.status === 'OCCUPIED').length} occupied
+            </Text>
+          </View>
+
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              accessibilityLabel="Reservations"
+              style={styles.reservationsBtn}
+              onPress={() => navigation.navigate('Reservations')}
+            >
+              <Ionicons name="calendar-outline" size={17} color={COLORS.primary} />
+              <Text style={styles.reservationsBtnTxt}>Reservations</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.headerIconBtn}
+              onPress={() => navigation.navigate('TV')}
+            >
+              <Ionicons name="tv-outline" size={18} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.headerIconBtn}
+              onPress={() => {
+                Alert.alert('Sign Out', 'Sign out of the staff account?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Sign Out', style: 'destructive', onPress: logout },
+                ]);
+              }}
+            >
+              <Ionicons name="log-out-outline" size={18} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
 
       <ScrollView
@@ -138,7 +245,7 @@ export default function StaffHomeScreen() {
       >
         {/* Standard Tables */}
         <Text style={styles.sectionTitle}>Standard Tables</Text>
-        <View style={styles.tablesGrid}>
+        <View style={styles.tablesList}>
           {tables.filter((t) => t.type === 'STANDARD').map((table) => (
             <TableCard
               key={table.id}
@@ -152,7 +259,7 @@ export default function StaffHomeScreen() {
 
         {/* VIP Tables */}
         <Text style={styles.sectionTitle}>VIP Tables 👑</Text>
-        <View style={styles.tablesGrid}>
+        <View style={styles.tablesList}>
           {tables.filter((t) => t.type === 'VIP').map((table) => (
             <TableCard
               key={table.id}
@@ -167,7 +274,7 @@ export default function StaffHomeScreen() {
       </ScrollView>
 
       {/* Start Session Modal */}
-      <Modal visible={modalVisible} transparent animationType="slide">
+      <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => !actionLoading && setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>
@@ -179,16 +286,43 @@ export default function StaffHomeScreen() {
             <View style={styles.searchRow}>
               <TextInput
                 style={styles.searchInput}
-                placeholder="Name or email..."
+                placeholder="Username, name, email, or phone..."
                 placeholderTextColor={COLORS.textMuted}
                 value={searchMember}
-                onChangeText={setSearchMember}
+                onChangeText={(t) => { setSearchMember(t); setFoundMember(null); }}
                 onSubmitEditing={searchMemberByEmail}
               />
               <TouchableOpacity style={styles.searchBtn} onPress={searchMemberByEmail}>
                 <Ionicons name="search" size={18} color={COLORS.textPrimary} />
               </TouchableOpacity>
             </View>
+
+            {!foundMember && memberResults.length > 0 && (
+              <View style={styles.searchResults}>
+                {memberResults.slice(0, 6).map((m: any) => (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={styles.searchResultRow}
+                    onPress={() => {
+                      setFoundMember(m);
+                      setSearchMember(m.gamifiedProfile?.displayName || m.email);
+                      setMemberResults([]);
+                    }}
+                  >
+                    <Ionicons name="person-circle" size={22} color={COLORS.textMuted} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.searchResultName}>
+                        {m.gamifiedProfile?.displayName || `${m.firstName} ${m.lastName}`}
+                      </Text>
+                      <Text style={styles.searchResultMeta} numberOfLines={1}>
+                        {m.email} · {m.phone}
+                      </Text>
+                    </View>
+                    <Text style={styles.searchResultCredits}>{(m.membership?.creditBalance || 0).toFixed(0)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
             {foundMember && (
               <View style={styles.foundMember}>
@@ -219,7 +353,7 @@ export default function StaffHomeScreen() {
               )}
               <TouchableOpacity
                 style={[styles.actionBtn, styles.walkinBtn]}
-                onPress={() => startSession(true)}
+                onPress={openWalkInEndModal}
                 disabled={actionLoading}
               >
                 <Ionicons name="walk" size={18} color={COLORS.textPrimary} />
@@ -235,16 +369,37 @@ export default function StaffHomeScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={walkInEndModal} transparent animationType="slide" onRequestClose={() => !actionLoading && setWalkInEndModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Start Walk-In Session</Text>
+            <Text style={styles.modalLabel}>Start Time</Text>
+            <View style={styles.expectedTimeBox}><Text style={styles.expectedTimeText}>{walkInStartTime.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })} · starts on confirmation</Text></View>
+            <Text style={styles.modalLabel}>Expected End Time</Text>
+            <TouchableOpacity style={styles.expectedTimeBox} onPress={() => setShowExpectedEndPicker(true)}>
+              <Ionicons name="time-outline" size={18} color={COLORS.primary} />
+              <Text style={styles.expectedTimeText}>{formatExpectedEnd(walkInStartTime, expectedEndTime)}</Text>
+            </TouchableOpacity>
+            {showExpectedEndPicker && <DateTimePicker value={expectedEndTime} mode="time" minimumDate={new Date(walkInStartTime.getTime() + 30 * 60 * 1000)} onChange={(_, value) => { setShowExpectedEndPicker(false); if (value) setExpectedEndTime(resolveExpectedEndTime(walkInStartTime, value)); }} />}
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setWalkInEndModal(false)} disabled={actionLoading}><Text style={styles.cancelBtnText}>Cancel</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, styles.walkinBtn]} onPress={confirmWalkInSession} disabled={actionLoading}>{actionLoading ? <ActivityIndicator color={COLORS.textPrimary} size="small" /> : <Text style={[styles.actionBtnText, { color: COLORS.textPrimary }]}>Start Session</Text>}</TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const TableCard = ({ table, statusColor, isVIP, onStart, onEnd }: any) => {
   const activeSession = table.sessions?.[0];
-  const queueCount = table.queue?.length || 0;
-  const sessionDuration = activeSession
-    ? Math.floor((Date.now() - new Date(activeSession.startTime).getTime()) / 1000 / 60)
-    : 0;
+  const currentReservation = table.currentReservation || (!activeSession && table.status === 'RESERVED' ? table.reservations?.[0] : null);
+  const nextReservation = table.nextReservation || table.reservations?.find((reservation: any) => new Date(reservation.startTime) > new Date());
+  const formatTime = (value: string) => new Date(value).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
+  const reservationName = (reservation: any) => reservation?.user ? `${reservation.user.firstName} ${reservation.user.lastName}` : 'Member';
+  const sessionName = activeSession?.user ? `${activeSession.user.firstName} ${activeSession.user.lastName}` : 'Walk-in';
 
   return (
     <View style={[styles.tableCard, isVIP && styles.vipCard, { borderColor: statusColor + '50' }]}>
@@ -256,20 +411,28 @@ const TableCard = ({ table, statusColor, isVIP, onStart, onEnd }: any) => {
       <Text style={styles.tableCardRate}>₱{table.ratePerHour}/hr</Text>
 
       {activeSession && (
-        <View style={styles.sessionInfo}>
-          <Ionicons name="time-outline" size={12} color={COLORS.textMuted} />
-          <Text style={styles.sessionTime}>{sessionDuration}m</Text>
-          {activeSession.user && (
-            <Text style={styles.sessionUser} numberOfLines={1}>
-              {activeSession.user.firstName}
-            </Text>
-          )}
+        <View style={styles.scheduleSection}>
+          <Text style={styles.scheduleHeading}>Current — {activeSession.isWalkin ? 'Walk-In' : 'Reservation'}</Text>
+          <Text style={styles.scheduleName}>{activeSession.isWalkin ? sessionName : reservationName(currentReservation)}</Text>
+          <Text style={styles.scheduleTime}>Start: {formatTime(activeSession.isWalkin ? activeSession.startTime : currentReservation?.startTime || activeSession.startTime)}</Text>
+          <Text style={styles.scheduleTime}>End: {activeSession.isWalkin ? (activeSession.expectedEndTime ? formatExpectedEnd(activeSession.startTime, activeSession.expectedEndTime) : (activeSession.endTime ? formatTime(activeSession.endTime) : 'Ongoing')) : (currentReservation?.endTime ? formatTime(currentReservation.endTime) : 'Ongoing')}</Text>
         </View>
       )}
 
-      {queueCount > 0 && (
-        <View style={styles.queueBadge}>
-          <Text style={styles.queueBadgeText}>{queueCount} waiting</Text>
+      {!activeSession && currentReservation && (
+        <View style={styles.scheduleSection}>
+          <Text style={styles.scheduleHeading}>Reserved For</Text>
+          <Text style={styles.scheduleName}>{reservationName(currentReservation)}</Text>
+          <Text style={styles.scheduleTime}>Start: {formatTime(currentReservation.startTime)}</Text>
+          <Text style={styles.scheduleTime}>End: {formatTime(currentReservation.endTime)}</Text>
+        </View>
+      )}
+
+      {nextReservation && (
+        <View style={styles.nextReservation}>
+          <Text style={styles.scheduleHeading}>Next Reservation</Text>
+          <Text style={styles.scheduleName}>{reservationName(nextReservation)}</Text>
+          <Text style={styles.scheduleTime}>{formatTime(nextReservation.startTime)} – {formatTime(nextReservation.endTime)}{nextReservation.status === 'PENDING' ? ' · Pending approval' : ''}</Text>
         </View>
       )}
 
@@ -292,13 +455,19 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },
   header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder },
+  headerRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
+  headerTitleGroup: { flex: 1, minWidth: 160, paddingRight: 4 },
+  headerActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 8, flexShrink: 1 },
+  reservationsBtn: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, borderRadius: 10, borderWidth: 1, borderColor: COLORS.primary + '70', backgroundColor: COLORS.primary + '12' },
+  reservationsBtnTxt: { color: COLORS.primary, fontSize: 12, fontWeight: '700' },
+  headerIconBtn: { width: 36, height: 36, borderRadius: 10, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surface, justifyContent: 'center', alignItems: 'center' },
   title: { fontSize: 22, fontWeight: '800', color: COLORS.textPrimary },
   subtitle: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 },
   content: { padding: 20, paddingBottom: 32 },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: COLORS.textSecondary, marginBottom: 12, marginTop: 8 },
-  tablesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
+  tablesList: { gap: 10, marginBottom: 20 },
   tableCard: {
-    width: '47%', backgroundColor: COLORS.surface,
+    width: '100%', backgroundColor: COLORS.surface,
     borderRadius: 14, padding: 14,
     borderWidth: 1, borderColor: COLORS.surfaceBorder,
     gap: 4,
@@ -309,11 +478,11 @@ const styles = StyleSheet.create({
   statusDot: { width: 10, height: 10, borderRadius: 5 },
   tableCardStatus: { fontSize: 11, color: COLORS.textSecondary, fontWeight: '600' },
   tableCardRate: { fontSize: 12, color: COLORS.primary },
-  sessionInfo: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
-  sessionTime: { fontSize: 11, color: COLORS.textMuted },
-  sessionUser: { fontSize: 11, color: COLORS.textSecondary, flex: 1 },
-  queueBadge: { backgroundColor: COLORS.warning + '20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start' },
-  queueBadgeText: { fontSize: 10, color: COLORS.warning, fontWeight: '600' },
+  scheduleSection: { marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: COLORS.surfaceBorder, gap: 2 },
+  nextReservation: { marginTop: 6, padding: 9, borderRadius: 8, backgroundColor: COLORS.warning + '12', gap: 2 },
+  scheduleHeading: { fontSize: 11, fontWeight: '800', color: COLORS.textSecondary, textTransform: 'uppercase' },
+  scheduleName: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
+  scheduleTime: { fontSize: 12, color: COLORS.textMuted },
   tableCardActions: { marginTop: 8 },
   startBtn: { backgroundColor: COLORS.primary, borderRadius: 8, padding: 8, alignItems: 'center' },
   startBtnText: { color: '#000', fontWeight: '700', fontSize: 13 },
@@ -324,6 +493,8 @@ const styles = StyleSheet.create({
   modalContent: { backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 14 },
   modalTitle: { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
   modalLabel: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
+  expectedTimeBox: { minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.surfaceLight, borderRadius: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: COLORS.surfaceBorder },
+  expectedTimeText: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '700' },
   searchRow: { flexDirection: 'row', gap: 10 },
   searchInput: {
     flex: 1, backgroundColor: COLORS.surfaceLight,
@@ -332,6 +503,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.surfaceBorder,
   },
   searchBtn: { backgroundColor: COLORS.surfaceLight, borderRadius: 10, width: 46, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: COLORS.surfaceBorder },
+  searchResults: { backgroundColor: COLORS.surfaceLight, borderRadius: 12, borderWidth: 1, borderColor: COLORS.surfaceBorder, overflow: 'hidden' },
+  searchResultRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder },
+  searchResultName: { fontSize: 13, fontWeight: '700', color: COLORS.textPrimary },
+  searchResultMeta: { fontSize: 11, color: COLORS.textMuted },
+  searchResultCredits: { fontSize: 12, fontWeight: '800', color: COLORS.primary, minWidth: 40, textAlign: 'right' },
   foundMember: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: COLORS.surfaceLight, padding: 12, borderRadius: 12 },
   foundName: { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary },
   foundCredits: { fontSize: 12, color: COLORS.textSecondary },

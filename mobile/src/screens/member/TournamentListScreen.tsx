@@ -1,13 +1,15 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  RefreshControl, ActivityIndicator, Alert, Modal, TextInput,
+  RefreshControl, ActivityIndicator, Alert, Modal, TextInput, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { useAuth } from '../../context/AuthContext';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { COLORS, RANK_CONFIG } from '../../constants';
+import { formatCredits } from '../../utils/credits';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -32,10 +34,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const PAYMENT_METHODS = [
+  { key: 'CREDITS', label: 'Credits' },
   { key: 'CASH', label: 'Cash' },
-  { key: 'GCASH', label: 'GCash' },
-  { key: 'MAYA', label: 'Maya' },
-  { key: 'CARD', label: 'Card' },
 ];
 
 const formatDuration = (minutes: number) => {
@@ -49,10 +49,15 @@ const formatDuration = (minutes: number) => {
 // ─── Main Screen ─────────────────────────────────────────────────────────────
 
 export default function TournamentListScreen() {
+  const navigation = useNavigation<any>();
   const { user } = useAuth();
+  const { height: screenHeight } = useWindowDimensions();
+  const isPlayer = user?.role === 'MEMBER';
   const { socket, joinTournament } = useSocket();
   const [tournaments, setTournaments] = useState<any[]>([]);
+  const [pendingFees, setPendingFees] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
+  const [detailVisible, setDetailVisible] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [registering, setRegistering] = useState(false);
@@ -62,13 +67,23 @@ export default function TournamentListScreen() {
 
   // Payment details modal (shown after user agrees to policy)
   const [paymentModal, setPaymentModal] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('GCASH');
-  const [paymentRef, setPaymentRef] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('CREDITS');
+  const [cancellationModal, setCancellationModal] = useState(false);
+  const [cancellationQuote, setCancellationQuote] = useState<any>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelSuccess, setCancelSuccess] = useState('');
+  const selectedRef = useRef<any>(null);
+  const restoreDetailAfterProfileRef = useRef(false);
+  const openingProfileRef = useRef(false);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
 
   const fetchTournaments = useCallback(async () => {
     try {
-      const res = await api.get('/api/tournaments');
-      setTournaments(res.data);
+      const [res, feeRes] = await Promise.all([api.get('/api/tournaments'), api.get('/api/tournaments/cancellation-fees/mine')]);
+      setTournaments(res.data); setPendingFees(feeRes.data || []);
     } catch {}
     finally { setLoading(false); setRefreshing(false); }
   }, []);
@@ -77,30 +92,83 @@ export default function TournamentListScreen() {
     try {
       const res = await api.get(`/api/tournaments/${t.id}`);
       setSelected(res.data);
+      setDetailVisible(true);
       joinTournament(t.id);
     } catch { Alert.alert('Error', 'Failed to load tournament'); }
   };
 
-  useEffect(() => {
-    fetchTournaments();
-    socket?.on('tournament:created', fetchTournaments);
-    socket?.on('tournament:bracketsGenerated', (t: any) => {
-      if (selected?.id === t.id) setSelected(t);
-    });
-    socket?.on('match:completed', async () => {
-      if (selected) {
-        try {
-          const res = await api.get(`/api/tournaments/${selected.id}`);
-          setSelected(res.data);
-        } catch {}
+  const closeTournamentDetail = useCallback(() => {
+    restoreDetailAfterProfileRef.current = false;
+    setDetailVisible(false);
+    setSelected(null);
+  }, []);
+
+  const refreshSelectedTournament = useCallback(async () => {
+    const current = selectedRef.current;
+    if (!current?.id) return;
+    try {
+      const res = await api.get(`/api/tournaments/${current.id}`);
+      setSelected(res.data);
+    } catch {}
+  }, []);
+
+  const openPlayerProfile = useCallback((userId: string) => {
+    if (!userId || openingProfileRef.current) return;
+
+    const rootNavigation = navigation.getParent();
+    if (!rootNavigation) return;
+
+    // A native Modal sits above the root stack. Hide it before opening the
+    // profile, but retain its tournament data so Back restores this detail.
+    openingProfileRef.current = true;
+    restoreDetailAfterProfileRef.current = true;
+    setDetailVisible(false);
+    requestAnimationFrame(() => {
+      try {
+        rootNavigation.navigate('PlayerProfile', { userId });
+      } finally {
+        openingProfileRef.current = false;
       }
     });
-    return () => {
-      socket?.off('tournament:created');
-      socket?.off('tournament:bracketsGenerated');
-      socket?.off('match:completed');
+  }, [navigation]);
+
+  useFocusEffect(useCallback(() => {
+    if (restoreDetailAfterProfileRef.current && selectedRef.current) {
+      restoreDetailAfterProfileRef.current = false;
+      setDetailVisible(true);
+      void refreshSelectedTournament().catch((error) => console.warn('[Tournament] detail refresh failed', error));
+    }
+  }, [refreshSelectedTournament]));
+
+  useEffect(() => {
+    const handleTournamentCreated = () => { void fetchTournaments().catch((error) => console.warn('[Tournament] list refresh failed', error)); };
+    const handleBracketsGenerated = (t: any) => {
+      void fetchTournaments().catch((error) => console.warn('[Tournament] list refresh failed', error));
+      if (selectedRef.current?.id === t.id) setSelected(t);
     };
-  }, [socket, selected]);
+    const handleMatchChanged = () => {
+      void fetchTournaments().catch((error) => console.warn('[Tournament] list refresh failed', error));
+      void refreshSelectedTournament().catch((error) => console.warn('[Tournament] detail refresh failed', error));
+    };
+
+    void fetchTournaments().catch((error) => console.warn('[Tournament] initial load failed', error));
+    socket?.on('tournament:created', handleTournamentCreated);
+    socket?.on('tournament:bracketsGenerated', handleBracketsGenerated);
+    socket?.on('match:completed', handleMatchChanged);
+    socket?.on('match:started', handleMatchChanged);
+    socket?.on('match:updated', handleMatchChanged);
+    return () => {
+      socket?.off('tournament:created', handleTournamentCreated);
+      socket?.off('tournament:bracketsGenerated', handleBracketsGenerated);
+      socket?.off('match:completed', handleMatchChanged);
+      socket?.off('match:started', handleMatchChanged);
+      socket?.off('match:updated', handleMatchChanged);
+    };
+  }, [socket, fetchTournaments, refreshSelectedTournament]);
+
+  if (!isPlayer) {
+    return <View style={s.center}><Ionicons name="shield-checkmark-outline" size={48} color={COLORS.gold} /><Text style={s.restrictedTitle}>Tournament participation is for Players</Text><Text style={s.restrictedText}>Administrator and Staff accounts can manage tournaments but cannot join, pay registration fees, or cancel participation.</Text><TouchableOpacity style={s.restrictedBtn} onPress={() => navigation.goBack()}><Text style={s.restrictedBtnTxt}>Return to dashboard</Text></TouchableOpacity></View>;
+  }
 
   // ── Step 1: User taps "Register Now" — show cancellation policy ──
   const handleRegisterTap = () => {
@@ -126,7 +194,6 @@ export default function TournamentListScreen() {
     try {
       await api.post(`/api/tournaments/${selected.id}/register`, {
         paymentMethod: method || undefined,
-        paymentRef: ref?.trim() || undefined,
       });
 
       const hasFee = selected.entryFee > 0;
@@ -143,15 +210,48 @@ export default function TournamentListScreen() {
       Alert.alert('Error', err.response?.data?.error || 'Registration failed');
     } finally {
       setRegistering(false);
-      setPaymentRef('');
-      setPaymentMethod('GCASH');
+      setPaymentMethod('CREDITS');
+    }
+  };
+
+  const openCancellation = async () => {
+    if (!selected) return;
+    try {
+      const { data } = await api.get(`/api/tournaments/${selected.id}/cancellation-quote`);
+      setCancellationQuote(data);
+      setCancellationModal(true);
+    } catch (err: any) {
+      Alert.alert('Unable to Cancel', err.response?.data?.error || 'Unable to calculate the cancellation fee.');
+    }
+  };
+
+  const confirmCancellation = async () => {
+    if (!selected || !cancellationQuote) return;
+    setCancelling(true);
+    try {
+      const { data } = await api.post(`/api/tournaments/${selected.id}/cancel`, { payWithCredits: true });
+      setCancellationModal(false);
+      setCancellationQuote(null);
+      setCancelSuccess(data.cancellationFeeStatus === 'PAID'
+        ? `Registration cancelled. Your entry fee was not refunded. The ₱${data.cancellationFee.toFixed(2)} cancellation fee was paid using credits.`
+        : `Registration cancelled. Your entry fee was not refunded. A ₱${data.cancellationFee.toFixed(2)} cancellation fee is pending; you cannot join future tournaments until it is settled.`);
+      const res = await api.get(`/api/tournaments/${selected.id}`);
+      setSelected(res.data);
+      fetchTournaments();
+    } catch (err: any) {
+      Alert.alert('Cancellation Failed', err.response?.data?.error || 'Unable to cancel your registration.');
+    } finally {
+      setCancelling(false);
     }
   };
 
   const myEntry = selected?.entries?.find((e: any) => e.userId === user?.id);
   const isRegistered = !!myEntry;
-  const isFull = selected && selected.entries?.filter((e: any) => e.status !== 'CANCELLED').length >= selected?.maxPlayers;
+  const isFull = selected && Number(selected.availableSlots ?? 0) <= 0;
   const canRegister = (selected?.status === 'REGISTRATION_OPEN' || selected?.status === 'UPCOMING') && !isRegistered && !isFull;
+  const canCancel = isRegistered && !['CANCELLED', 'FORFEITED'].includes(myEntry?.status) &&
+    (selected?.status === 'REGISTRATION_OPEN' || selected?.status === 'UPCOMING') &&
+    new Date(selected?.startDate).getTime() > Date.now();
 
   if (loading) return (
     <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
@@ -168,6 +268,7 @@ export default function TournamentListScreen() {
         contentContainerStyle={s.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchTournaments(); }} tintColor={COLORS.primary} />}
       >
+        {pendingFees.length > 0 && <View style={s.pendingFeeNotice}><Ionicons name="warning-outline" size={22} color={COLORS.warning}/><View style={{flex:1}}><Text style={s.pendingFeeTitle}>Pending cancellation fee</Text><Text style={s.pendingFeeText}>{pendingFees.map((fee:any) => `${fee.tournament?.name}: ${Number(fee.cancellationFee).toFixed(0)} credits`).join(' · ')}. It will be deducted automatically after an approved top-up provides enough credits.</Text><TouchableOpacity onPress={()=>navigation.navigate('Payments')}><Text style={s.pendingFeeTopup}>Top Up Credits</Text></TouchableOpacity></View></View>}
         {tournaments.length === 0 && (
           <View style={s.empty}><Text style={s.emptyTxt}>No tournaments yet. Check back soon!</Text></View>
         )}
@@ -187,7 +288,7 @@ export default function TournamentListScreen() {
             <View style={s.cardStats}>
               <View style={s.cardStat}>
                 <Ionicons name="people-outline" size={14} color={COLORS.textMuted} />
-                <Text style={s.cardStatTxt}>{t._count?.entries || 0} / {t.maxPlayers}</Text>
+                <Text style={s.cardStatTxt}>{t.activePlayerCount || 0} / {t.maxPlayers}</Text>
               </View>
               <View style={s.cardStat}>
                 <Ionicons name="calendar-outline" size={14} color={COLORS.textMuted} />
@@ -220,10 +321,10 @@ export default function TournamentListScreen() {
       </ScrollView>
 
       {/* ── Tournament Detail Modal ── */}
-      <Modal visible={!!selected} animationType="slide" onRequestClose={() => setSelected(null)}>
+      <Modal visible={detailVisible && !!selected} animationType="slide" onRequestClose={closeTournamentDetail}>
         <View style={s.modal}>
           <View style={s.modalHeader}>
-            <TouchableOpacity onPress={() => setSelected(null)}>
+            <TouchableOpacity onPress={closeTournamentDetail}>
               <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
             </TouchableOpacity>
             <Text style={s.modalTitle} numberOfLines={1}>{selected?.name}</Text>
@@ -241,15 +342,19 @@ export default function TournamentListScreen() {
               </Text>
               {selected?.description && <Text style={s.infoDesc}>{selected.description}</Text>}
               <View style={s.infoStats}>
-                <InfoStat icon="people" label="Players" value={`${selected?.entries?.filter((e: any) => e.status !== 'CANCELLED').length || 0} / ${selected?.maxPlayers}`} />
+                <InfoStat icon="people" label="Active" value={`${selected?.activePlayerCount || 0} / ${selected?.maxPlayers}`} />
                 <InfoStat icon="calendar" label="Date" value={selected?.startDate ? new Date(selected.startDate).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'} />
                 <InfoStat icon="time" label="Time" value={selected?.startDate ? new Date(selected.startDate).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : '-'} />
+                <InfoStat icon="flag" label="Race To" value={`${selected?.raceTo || 5}`} />
                 {selected?.estimatedDuration && (
                   <InfoStat icon="hourglass" label="Est." value={formatDuration(selected.estimatedDuration)} />
                 )}
                 <InfoStat icon="trophy" label="Prize" value={selected?.prizePool > 0 ? `₱${selected.prizePool}` : 'TBD'} />
+                <InfoStat icon="receipt" label="Paid" value={`${selected?.paidRegistrationCount || 0}`} />
                 <InfoStat icon="wallet" label="Entry" value={selected?.entryFee > 0 ? `₱${selected.entryFee}` : 'Free'} />
               </View>
+              {selected?.registrationDeadline && <Text style={s.detailNote}>Registration closes {new Date(selected.registrationDeadline).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}</Text>}
+              {selected?.status === 'COMPLETED' && selected?.championTitle && <View style={s.championCard}><Text style={s.championTitle}>Champion</Text><Text style={s.championName}>{selected.championTitle.user?.gamifiedProfile?.displayName || selected.championTitle.user?.firstName || 'Champion'}</Text><Text style={s.championDate}>Completed {selected?.endDate ? new Date(selected.endDate).toLocaleDateString('en-PH', { dateStyle: 'medium' }) : ''}</Text></View>}
             </View>
 
             {/* Registration Status */}
@@ -268,23 +373,25 @@ export default function TournamentListScreen() {
             {isRegistered && (
               <View style={[
                 s.registeredBadge,
-                myEntry?.status === 'PENDING_PAYMENT' && { borderColor: '#f59e0b', backgroundColor: '#f59e0b15' },
+                myEntry?.status === 'PENDING_PAYMENT' && { borderColor: COLORS.warning, backgroundColor: COLORS.warning + '15' },
                 myEntry?.status === 'PENDING_APPROVAL' && { borderColor: COLORS.info, backgroundColor: COLORS.info + '15' },
               ]}>
                 <Ionicons
                   name={myEntry?.status === 'APPROVED' ? 'checkmark-circle' : 'time-outline'}
                   size={20}
-                  color={myEntry?.status === 'APPROVED' ? COLORS.success : myEntry?.status === 'PENDING_PAYMENT' ? '#f59e0b' : COLORS.info}
+                  color={myEntry?.status === 'APPROVED' ? COLORS.success : myEntry?.status === 'PENDING_PAYMENT' ? COLORS.warning : COLORS.info}
                 />
                 <View style={{ flex: 1 }}>
                   <Text style={[
                     s.registeredTxt,
-                    myEntry?.status === 'PENDING_PAYMENT' && { color: '#f59e0b' },
+                    myEntry?.status === 'PENDING_PAYMENT' && { color: COLORS.warning },
                     myEntry?.status === 'PENDING_APPROVAL' && { color: COLORS.info },
                   ]}>
                     {myEntry?.status === 'APPROVED' && 'Registration Confirmed ✅'}
-                    {myEntry?.status === 'PENDING_PAYMENT' && 'Pending Payment — Submit your entry fee to complete registration'}
+                    {myEntry?.status === 'PENDING_PAYMENT' && 'Cash selected — Pay your entry fee at the counter'}
                     {myEntry?.status === 'PENDING_APPROVAL' && 'Awaiting Admin Approval…'}
+                    {myEntry?.status === 'CANCELLED' && (myEntry?.cancellationFeeStatus === 'PENDING' ? 'Registration Cancelled · Cancellation Fee Pending' : 'Registration Cancelled')}
+                    {myEntry?.status === 'FORFEITED' && 'Forfeit Recorded'}
                   </Text>
                 </View>
               </View>
@@ -294,15 +401,20 @@ export default function TournamentListScreen() {
               <View style={s.fullBadge}><Text style={s.fullTxt}>Tournament is full</Text></View>
             )}
 
+            {canCancel && (
+              <TouchableOpacity style={s.cancelRegistrationBtn} onPress={openCancellation}>
+                <Ionicons name="close-circle-outline" size={19} color={COLORS.error} />
+                <Text style={s.cancelRegistrationTxt}>Cancel Tournament Registration</Text>
+              </TouchableOpacity>
+            )}
+
             {/* Players List */}
-            <Text style={s.sectionTitle}>
-              Registered Players ({selected?.entries?.filter((e: any) => e.status === 'APPROVED').length || 0} approved)
-            </Text>
-            {selected?.entries?.filter((e: any) => e.status !== 'CANCELLED').map((entry: any, i: number) => {
+            <Text style={s.sectionTitle}>Active Players ({selected?.activePlayerCount || 0})</Text>
+            {selected?.entries?.filter((e: any) => ['PENDING_APPROVAL', 'APPROVED', 'CHECKED_IN', 'WINNER'].includes(e.status)).map((entry: any, i: number) => {
               const gp = entry.user?.gamifiedProfile;
               const rankCfg = RANK_CONFIG[gp?.rank as keyof typeof RANK_CONFIG] || RANK_CONFIG.Rookie;
               return (
-                <View key={entry.id} style={s.playerRow}>
+                <TouchableOpacity key={entry.id} style={s.playerRow} onPress={() => entry.userId !== user?.id && openPlayerProfile(entry.userId)}>
                   <Text style={s.playerNum}>#{i + 1}</Text>
                   <View style={[s.playerAvatar, { backgroundColor: rankCfg.color + '20' }]}>
                     <Text>{rankCfg.icon}</Text>
@@ -316,12 +428,14 @@ export default function TournamentListScreen() {
                   {entry.userId === user?.id && (
                     <View style={s.youBadge}><Text style={s.youTxt}>YOU</Text></View>
                   )}
-                </View>
+                </TouchableOpacity>
               );
             })}
 
-            {/* Bracket */}
-            {selected?.status === 'IN_PROGRESS' && selected?.matches?.length > 0 && (
+            <TournamentPresentation tournament={selected} currentUserId={user?.id} onPlayerPress={(entry: any) => entry && entry.userId !== user?.id && openPlayerProfile(entry.userId)} />
+
+            {/* Legacy linear bracket retained for source-history only; presentation above uses persisted bracket stages. */}
+            {false && selected?.status === 'IN_PROGRESS' && selected?.matches?.length > 0 && (
               <>
                 <Text style={s.sectionTitle}>Bracket</Text>
                 {[...new Set(selected.matches.map((m: any) => m.round))].map((round: any) => (
@@ -338,9 +452,9 @@ export default function TournamentListScreen() {
                           {match.status === 'IN_PROGRESS' && (
                             <View style={s.liveBadge}><Text style={s.liveTxt}>🔴 LIVE</Text></View>
                           )}
-                          <MatchPlayer entry={p1} score={match.player1Score} isWinner={match.winnerId === match.player1Id} />
+                          <MatchPlayer entry={p1} score={match.player1Score} isWinner={match.winnerId === match.player1Id} onPress={() => p1 && p1.userId !== user?.id && openPlayerProfile(p1.userId)} />
                           <View style={s.vsBox}><Text style={s.vsTxt}>VS</Text></View>
-                          <MatchPlayer entry={p2} score={match.player2Score} isWinner={match.winnerId === match.player2Id} />
+                          <MatchPlayer entry={p2} score={match.player2Score} isWinner={match.winnerId === match.player2Id} onPress={() => p2 && p2.userId !== user?.id && openPlayerProfile(p2.userId)} />
                           {match.status === 'COMPLETED' && winner && (
                             <Text style={s.winnerTxt}>🏆 {winner.user?.gamifiedProfile?.displayName || winner.user?.firstName} wins!</Text>
                           )}
@@ -357,16 +471,19 @@ export default function TournamentListScreen() {
       </Modal>
 
       {/* ── Cancellation Policy Modal ── */}
-      <Modal visible={policyModal} transparent animationType="fade">
+      <Modal visible={policyModal} transparent animationType="fade" onRequestClose={() => setPolicyModal(false)}>
         <View style={s.overlay}>
-          <View style={s.dialogBox}>
-            <View style={s.dialogIcon}>
-              <Ionicons name="information-circle" size={32} color={COLORS.info} />
+          <View style={[s.dialogBox, s.policyDialog, { maxHeight: screenHeight * 0.86 }]}>
+            <View style={s.policyHeader}>
+              <View style={s.dialogIcon}>
+                <Ionicons name="information-circle" size={32} color={COLORS.info} />
+              </View>
+              <Text style={s.dialogTitle}>Registration Terms & Conditions</Text>
+              <Text style={s.dialogBody}>
+                Please read and acknowledge the following before registering for this tournament:
+              </Text>
             </View>
-            <Text style={s.dialogTitle}>Registration Terms & Conditions</Text>
-            <Text style={s.dialogBody}>
-              Please read and acknowledge the following before registering for this tournament:
-            </Text>
+            <ScrollView style={s.policyScroll} contentContainerStyle={s.policyScrollContent} showsVerticalScrollIndicator>
             <View style={s.policyItem}>
               <Ionicons name="close-circle" size={18} color={COLORS.error} />
               <Text style={s.policyText}>
@@ -378,7 +495,7 @@ export default function TournamentListScreen() {
               <Ionicons name="alert-circle" size={18} color="#f59e0b" />
               <Text style={s.policyText}>
                 <Text style={{ fontWeight: '700' }}>Cancellation Fee: </Text>
-                If you withdraw from the tournament after your registration has been approved, a cancellation processing fee will apply.
+                Cancelling before the tournament starts costs 200 credits for Single Elimination or 400 credits for Double Elimination. Unpaid fees block future tournament registrations.
               </Text>
             </View>
             <View style={s.policyItem}>
@@ -387,6 +504,7 @@ export default function TournamentListScreen() {
                 Your registration is not confirmed until the entry fee is paid and approved by an administrator.
               </Text>
             </View>
+            </ScrollView>
             <View style={s.dialogActions}>
               <TouchableOpacity
                 style={s.dialogCancelBtn}
@@ -406,7 +524,7 @@ export default function TournamentListScreen() {
       </Modal>
 
       {/* ── Payment Details Modal ── */}
-      <Modal visible={paymentModal} transparent animationType="fade">
+      <Modal visible={paymentModal} transparent animationType="fade" onRequestClose={() => !registering && setPaymentModal(false)}>
         <View style={s.overlay}>
           <View style={s.dialogBox}>
             <Text style={s.dialogTitle}>Payment Details</Text>
@@ -429,21 +547,8 @@ export default function TournamentListScreen() {
                 </TouchableOpacity>
               ))}
             </View>
-
-            {paymentMethod !== 'CASH' && (
-              <>
-                <Text style={s.fieldLabelModal}>Reference Number (optional)</Text>
-                <TextInput
-                  style={s.payRefInput}
-                  value={paymentRef}
-                  onChangeText={setPaymentRef}
-                  placeholder="e.g. GCash ref: 1234567890"
-                  placeholderTextColor={COLORS.textMuted}
-                  autoCapitalize="none"
-                />
-              </>
-            )}
-
+            {paymentMethod === 'CREDITS' && <View style={s.cancelFeeCard}><Text style={s.cancelFeeLabel}>Credit payment</Text><Text style={s.cancelFeeReason}>Available balance: {formatCredits(user?.membership?.creditBalance)} credits. The registration fee will be deducted once only; top up credits first if needed.</Text></View>}
+            {paymentMethod === 'CASH' && <View style={s.cancelFeeCard}><Text style={s.cancelFeeLabel}>Cash payment</Text><Text style={s.cancelFeeReason}>Pay the registration fee at the counter to complete your tournament registration. Your wallet will not be charged.</Text></View>}
             <Text style={s.payNote}>
               Your registration will be reviewed by the admin after submission. You will receive a notification once confirmed.
             </Text>
@@ -457,7 +562,7 @@ export default function TournamentListScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={s.dialogAgreeBtn}
-                onPress={() => submitRegistration(paymentMethod, paymentRef)}
+                onPress={() => submitRegistration(paymentMethod, null)}
                 disabled={registering}
               >
                 {registering
@@ -468,6 +573,37 @@ export default function TournamentListScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      <Modal visible={cancellationModal} transparent animationType="fade" onRequestClose={() => setCancellationModal(false)}>
+        <View style={s.overlay}>
+          <View style={s.dialogBox}>
+            <View style={s.dialogIcon}><Ionicons name="warning" size={32} color={COLORS.error} /></View>
+            <Text style={s.dialogTitle}>Cancel Registration?</Text>
+            <Text style={s.dialogBody}>Your tournament entry fee is <Text style={{ fontWeight: '800', color: COLORS.error }}>strictly non-refundable</Text>.</Text>
+            <View style={s.cancelFeeCard}>
+              <Text style={s.cancelFeeLabel}>Cancellation fee</Text>
+              <Text style={s.cancelFeeValue}>₱{Number(cancellationQuote?.cancellationFee || 0).toFixed(2)}</Text>
+              <Text style={s.cancelFeeReason}>{cancellationQuote?.reason}</Text>
+            </View>
+            <Text style={s.dialogBody}>Available credits will pay this fee when sufficient. Otherwise it is recorded as pending and blocks future tournament registrations until settled.</Text>
+            <View style={s.dialogActions}>
+              <TouchableOpacity style={s.dialogCancelBtn} onPress={() => setCancellationModal(false)} disabled={cancelling}><Text style={s.dialogCancelTxt}>Keep Registration</Text></TouchableOpacity>
+              <TouchableOpacity style={s.dialogConfirmBtn} onPress={confirmCancellation} disabled={cancelling}>
+                {cancelling ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.dialogConfirmTxt}>Confirm Cancellation</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!cancelSuccess} transparent animationType="fade" onRequestClose={() => setCancelSuccess('')}>
+        <View style={s.overlay}><View style={s.dialogBox}>
+          <View style={s.dialogIcon}><Ionicons name="checkmark-circle" size={40} color={COLORS.success} /></View>
+          <Text style={s.dialogTitle}>Registration Cancelled</Text>
+          <Text style={s.dialogBody}>{cancelSuccess}</Text>
+          <TouchableOpacity style={s.dialogAgreeBtn} onPress={() => setCancelSuccess('')}><Text style={s.dialogAgreeTxt}>Done</Text></TouchableOpacity>
+        </View></View>
       </Modal>
     </View>
   );
@@ -483,19 +619,71 @@ const InfoStat = ({ icon, label, value }: any) => (
   </View>
 );
 
-const MatchPlayer = ({ entry, score, isWinner }: any) => {
+const MatchPlayer = ({ entry, score, isWinner, onPress }: any) => {
   const gp = entry?.user?.gamifiedProfile;
   const rankCfg = RANK_CONFIG[gp?.rank as keyof typeof RANK_CONFIG] || RANK_CONFIG.Rookie;
   return (
-    <View style={[s.matchPlayer, isWinner && s.matchPlayerWinner]}>
+    <TouchableOpacity disabled={!entry} onPress={onPress} style={[s.matchPlayer, isWinner && s.matchPlayerWinner]}>
       <Text style={s.matchPlayerIcon}>{entry ? rankCfg.icon : '❓'}</Text>
       <Text style={s.matchPlayerName} numberOfLines={1}>
         {entry ? (gp?.displayName || entry.user?.firstName) : 'TBD'}
       </Text>
       <Text style={[s.matchScore, isWinner && { color: COLORS.gold }]}>{score ?? '-'}</Text>
-    </View>
+    </TouchableOpacity>
   );
 };
+
+const STAGE_LABELS: Record<string, string> = {
+  WINNERS: 'Winners Bracket',
+  LOSERS: 'Losers Bracket',
+  GRAND_FINAL: 'Grand Final',
+  RESET_FINAL: 'Reset Final',
+};
+
+const matchLabel = (match: any) => !match ? 'Match pending' : match.isResetFinal ? 'Reset Final' : match.isGrandFinal ? 'Grand Final' : `Round ${match.round} · Match ${match.matchNumber}`;
+
+function TournamentPresentation({ tournament, currentUserId, onPlayerPress }: any) {
+  const entriesByUser = new Map((tournament?.entries || []).filter(Boolean).map((entry: any) => [entry.userId, entry]));
+  const matches = (tournament?.matches || []).filter(Boolean).filter((match: any) => !match.isResetFinal || match.player1Id || match.player2Id || match.status === 'COMPLETED' || match.status === 'IN_PROGRESS');
+  if (!matches.length) return <View style={s.presentationEmpty}><Text style={s.emptyTxt}>{tournament?.status === 'REGISTRATION_CLOSED' ? 'Registration is closed. Bracket is being prepared.' : 'No bracket has been generated yet.'}</Text></View>;
+
+  const ownMatches = matches.filter((match: any) => match.player1Id === currentUserId || match.player2Id === currentUserId).filter((match: any) => ['PENDING', 'IN_PROGRESS'].includes(match.status));
+  const stageOrder = tournament?.format === 'DOUBLE_ELIMINATION'
+    ? ['WINNERS', 'LOSERS', 'GRAND_FINAL', 'RESET_FINAL']
+    : ['WINNERS', 'GRAND_FINAL'];
+  const stages = stageOrder.map((stage) => ({ stage, matches: matches.filter((match: any) => (match.bracketStage || 'WINNERS') === stage) })).filter((group) => group.matches.length);
+  if (!stages.length) stages.push({ stage: 'WINNERS', matches }); // historical ROUND_ROBIN fallback
+
+  return <>
+    {ownMatches.length > 0 && <><Text style={s.sectionTitle}>My Match</Text>{ownMatches.map((match: any) => <BracketMatch key={match.id} match={match} raceTo={tournament?.raceTo} entriesByUser={entriesByUser} currentUserId={currentUserId} onPlayerPress={onPlayerPress} />)}</>}
+    <Text style={s.sectionTitle}>{tournament?.status === 'COMPLETED' ? 'Results & Bracket' : 'Bracket'}</Text>
+    {stages.map(({ stage, matches: stageMatches }) => <View key={stage} style={s.bracketStage}>
+      <Text style={s.stageTitle}>{STAGE_LABELS[stage] || (tournament?.format === 'ROUND_ROBIN' ? 'Match Results' : 'Bracket')}</Text>
+      {[...new Set(stageMatches.map((match: any) => match.round))].map((round: any) => <View key={`${stage}-${round}`}>
+        <Text style={s.roundTitle}>{stage === 'WINNERS' && round === Math.max(...stageMatches.map((match: any) => match.round)) && tournament?.format === 'SINGLE_ELIMINATION' ? 'Final' : `Round ${round}`}</Text>
+        {stageMatches.filter((match: any) => match.round === round).map((match: any) => <BracketMatch key={match.id} match={match} raceTo={tournament?.raceTo} entriesByUser={entriesByUser} currentUserId={currentUserId} onPlayerPress={onPlayerPress} />)}
+      </View>)}
+    </View>)}
+  </>;
+}
+
+function BracketMatch({ match, raceTo, entriesByUser, currentUserId, onPlayerPress }: any) {
+  const p1 = entriesByUser.get(match.player1Id);
+  const p2 = entriesByUser.get(match.player2Id);
+  const winner = entriesByUser.get(match.winnerId);
+  const isOwn = match.player1Id === currentUserId || match.player2Id === currentUserId;
+  return <View style={[s.matchCard, match.status === 'IN_PROGRESS' && s.matchLive, isOwn && s.matchMine]}>
+    <View style={s.matchMeta}><Text style={s.matchMetaText}>{matchLabel(match)}</Text>{isOwn && <Text style={s.myMatchTag}>YOUR MATCH</Text>}</View>
+    {match.status === 'IN_PROGRESS' && <View style={s.liveBadge}><Text style={s.liveTxt}>LIVE</Text></View>}
+    <MatchPlayer entry={p1} score={match.player1Score} isWinner={match.winnerId === match.player1Id} onPress={() => onPlayerPress(p1)} />
+    <View style={s.vsBox}><Text style={s.vsTxt}>VS</Text></View>
+    <MatchPlayer entry={p2} score={match.player2Score} isWinner={match.winnerId === match.player2Id} onPress={() => onPlayerPress(p2)} />
+    <Text style={s.matchDetails}>Race To {raceTo || 5}{match.scheduledAt ? ` · ${new Date(match.scheduledAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}{match.table?.tableNumber ? ` · Table ${match.table.tableNumber}` : ''}</Text>
+    {match.status === 'COMPLETED' && winner && <Text style={s.winnerTxt}>Winner: {winner.user?.gamifiedProfile?.displayName || winner.user?.firstName}</Text>}
+    {match.status === 'BYE' && <Text style={s.byeTxt}>BYE — Auto advance</Text>}
+    {match.status === 'PENDING' && (!match.player1Id || !match.player2Id) && <Text style={s.byeTxt}>Waiting for opponent</Text>}
+  </View>;
+}
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
@@ -515,6 +703,10 @@ const s = StyleSheet.create({
   cardStat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   cardStatTxt: { fontSize: 12, color: COLORS.textSecondary },
   empty: { padding: 40, alignItems: 'center' },
+  pendingFeeNotice: { flexDirection: 'row', gap: 10, padding: 14, borderRadius: 13, backgroundColor: COLORS.warning + '18', borderWidth: 1, borderColor: COLORS.warning + '80' },
+  pendingFeeTitle: { color: COLORS.warning, fontWeight: '800', fontSize: 14 },
+  pendingFeeText: { color: COLORS.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 3 },
+  pendingFeeTopup: { color: COLORS.primary, fontWeight: '800', marginTop: 7 },
   emptyTxt: { color: COLORS.textMuted },
   modal: { flex: 1, backgroundColor: COLORS.background },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder },
@@ -527,13 +719,27 @@ const s = StyleSheet.create({
   infoStatItem: { backgroundColor: COLORS.surfaceLight || COLORS.surface, borderRadius: 10, padding: 10, alignItems: 'center', gap: 4, flex: 1, minWidth: '22%' },
   infoStatLbl: { fontSize: 10, color: COLORS.textMuted },
   infoStatVal: { fontSize: 13, fontWeight: '700', color: COLORS.textPrimary },
+  detailNote: { color: COLORS.textSecondary, fontSize: 12 },
+  championCard: { backgroundColor: COLORS.gold + '18', borderWidth: 1, borderColor: COLORS.gold + '80', borderRadius: 12, padding: 12, alignItems: 'center' },
+  championTitle: { color: COLORS.gold, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
+  championName: { color: COLORS.textPrimary, fontSize: 18, fontWeight: '800', marginTop: 3 },
+  championDate: { color: COLORS.textSecondary, fontSize: 11, marginTop: 2 },
   registerBtn: { backgroundColor: COLORS.primary, borderRadius: 14, height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   registerTxt: { fontSize: 16, fontWeight: '700', color: '#000' },
+  restrictedTitle: { color: COLORS.textPrimary, fontSize: 19, fontWeight: '800', marginTop: 14 },
+  restrictedText: { color: COLORS.textSecondary, textAlign: 'center', paddingHorizontal: 32, lineHeight: 20, marginTop: 6 },
+  restrictedBtn: { marginTop: 18, backgroundColor: COLORS.primary, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12 },
+  restrictedBtnTxt: { color: '#00150f', fontWeight: '800' },
   registeredBadge: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.success + '20', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: COLORS.success },
   registeredTxt: { color: COLORS.success, fontWeight: '700', flex: 1 },
+  cancelRegistrationBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: COLORS.error, backgroundColor: COLORS.error + '12' },
+  cancelRegistrationTxt: { color: COLORS.error, fontSize: 14, fontWeight: '800' },
   fullBadge: { alignItems: 'center', padding: 14, backgroundColor: COLORS.surfaceBorder, borderRadius: 14 },
   fullTxt: { color: COLORS.textMuted },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary },
+  presentationEmpty: { padding: 18, backgroundColor: COLORS.surface, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: COLORS.surfaceBorder },
+  bracketStage: { gap: 4 },
+  stageTitle: { color: COLORS.primary, fontSize: 14, fontWeight: '800', marginTop: 4 },
   playerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: COLORS.surfaceBorder },
   playerNum: { fontSize: 13, color: COLORS.textMuted, width: 24, textAlign: 'center' },
   playerAvatar: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
@@ -545,6 +751,11 @@ const s = StyleSheet.create({
   roundTitle: { fontSize: 13, fontWeight: '700', color: COLORS.textMuted, marginBottom: 8, marginTop: 4 },
   matchCard: { backgroundColor: COLORS.surface, borderRadius: 14, padding: 14, gap: 8, borderWidth: 1, borderColor: COLORS.surfaceBorder, marginBottom: 8 },
   matchLive: { borderColor: COLORS.error },
+  matchMine: { borderColor: COLORS.primary, borderWidth: 2 },
+  matchMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  matchMetaText: { color: COLORS.textMuted, fontSize: 11, fontWeight: '700' },
+  myMatchTag: { color: COLORS.primary, fontSize: 10, fontWeight: '900' },
+  matchDetails: { color: COLORS.textSecondary, fontSize: 11, textAlign: 'center' },
   liveBadge: { alignSelf: 'flex-start', backgroundColor: COLORS.error + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   liveTxt: { fontSize: 11, fontWeight: '700', color: COLORS.error },
   matchPlayer: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8, borderRadius: 10, backgroundColor: COLORS.surfaceBorder },
@@ -558,6 +769,10 @@ const s = StyleSheet.create({
   byeTxt: { fontSize: 12, color: COLORS.textMuted, textAlign: 'center' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   dialogBox: { backgroundColor: COLORS.surface, borderRadius: 20, padding: 22, gap: 14, width: '100%' },
+  policyDialog: { flexShrink: 1 },
+  policyHeader: { gap: 14 },
+  policyScroll: { flexShrink: 1 },
+  policyScrollContent: { gap: 14, paddingRight: 2 },
   dialogIcon: { alignItems: 'center' },
   dialogTitle: { fontSize: 17, fontWeight: '800', color: COLORS.textPrimary, textAlign: 'center' },
   dialogBody: { fontSize: 14, color: COLORS.textSecondary, lineHeight: 21, textAlign: 'center' },
@@ -576,4 +791,10 @@ const s = StyleSheet.create({
   dialogCancelTxt: { color: COLORS.textSecondary, fontWeight: '600' },
   dialogAgreeBtn: { flex: 1.5, height: 46, borderRadius: 12, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
   dialogAgreeTxt: { color: '#000', fontWeight: '800', fontSize: 14 },
+  dialogConfirmBtn: { flex: 1.5, height: 46, borderRadius: 12, backgroundColor: COLORS.error, justifyContent: 'center', alignItems: 'center' },
+  dialogConfirmTxt: { color: '#fff', fontWeight: '800', fontSize: 13, textAlign: 'center' },
+  cancelFeeCard: { width: '100%', backgroundColor: COLORS.error + '12', borderWidth: 1, borderColor: COLORS.error + '70', borderRadius: 12, padding: 14, alignItems: 'center', gap: 4 },
+  cancelFeeLabel: { color: COLORS.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1 },
+  cancelFeeValue: { color: COLORS.error, fontSize: 25, fontWeight: '900' },
+  cancelFeeReason: { color: COLORS.textSecondary, fontSize: 12, lineHeight: 17, textAlign: 'center' },
 });

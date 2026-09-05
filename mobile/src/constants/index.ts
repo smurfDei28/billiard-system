@@ -46,11 +46,18 @@ export const FONTS = {
 
 // Rank colors and icons
 export const RANK_CONFIG = {
-  Rookie:  { color: COLORS.rankRookie, icon: '🎱', minWins: 0 },
-  Hustler: { color: COLORS.rankHustler, icon: '🎯', minWins: 5 },
-  Shark:   { color: COLORS.rankShark, icon: '🦈', minWins: 20 },
-  Legend:  { color: COLORS.rankLegend, icon: '⭐', minWins: 50 },
-  Elite:   { color: COLORS.rankElite, icon: '👑', minWins: 100 },
+  Rookie:  { color: COLORS.rankRookie, icon: '🎱', minXp: 0 },
+  Hustler: { color: COLORS.rankHustler, icon: '🎯', minXp: 200 },
+  Shark:   { color: COLORS.rankShark, icon: '🦈', minXp: 500 },
+  Legend:  { color: COLORS.rankLegend, icon: '⭐', minXp: 1000 },
+  Elite:   { color: COLORS.rankElite, icon: '👑', minXp: 2000 },
+};
+
+export const rankProgressForXp = (xp: number) => {
+  const ranks = Object.entries(RANK_CONFIG).map(([name, config]) => ({ name, ...config }));
+  const currentIndex = ranks.reduce((selected, rank, index) => xp >= rank.minXp ? index : selected, 0);
+  const current = ranks[currentIndex]; const next = ranks[currentIndex + 1];
+  return { current, next, progress: next ? Math.min(1, Math.max(0, (xp - current.minXp) / (next.minXp - current.minXp))) : 1 };
 };
 
 // Membership plans

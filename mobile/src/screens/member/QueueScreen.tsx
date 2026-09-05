@@ -1,204 +1,73 @@
-// QueueScreen.tsx
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Alert, ActivityIndicator, Modal, TextInput } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { api } from '../../context/AuthContext';
+import { api, useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
-import { useAuth } from '../../context/AuthContext';
 import { COLORS } from '../../constants';
 
-export default function QueueScreen() {
+const formatTime = (value: string) => new Date(value).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
+const formatExpectedEnd = (start: string, end: string) => {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  return `${formatTime(end)}${startDate.toDateString() === endDate.toDateString() ? '' : ' (Next Day)'}`;
+};
+
+export default function QueueScreen({ navigation }: any) {
   const { user } = useAuth();
   const { socket } = useSocket();
   const [tables, setTables] = useState<any[]>([]);
-  const [queue, setQueue] = useState<any[]>([]);
+  const [schedule, setSchedule] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [joinModal, setJoinModal] = useState(false);
-  const [selectedTable, setSelectedTable] = useState<any>(null);
-  const [partySize, setPartySize] = useState('1');
-  const [joining, setJoining] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
-      const [tRes, qRes] = await Promise.all([api.get('/api/tables'), api.get('/api/queue')]);
-      setTables(tRes.data);
-      setQueue(qRes.data);
-    } catch { }
-    finally { setLoading(false); setRefreshing(false); }
+      const [tablesResponse, scheduleResponse] = await Promise.all([api.get('/api/tables'), api.get('/api/queue')]);
+      setTables(Array.isArray(tablesResponse.data) ? tablesResponse.data : []);
+      setSchedule(Array.isArray(scheduleResponse.data) ? scheduleResponse.data : []);
+    } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
   useEffect(() => {
     fetchData();
     socket?.on('queue:updated', fetchData);
-    socket?.on('queue:called', fetchData);
+    socket?.on('reservation:new', fetchData);
+    socket?.on('reservation:updated', fetchData);
     socket?.on('table:updated', fetchData);
-    return () => { socket?.off('queue:updated'); socket?.off('queue:called'); socket?.off('table:updated'); };
-  }, [socket]);
-
-  const joinQueue = async () => {
-    if (!selectedTable) return;
-    setJoining(true);
-    try {
-      await api.post('/api/queue/join', { tableId: selectedTable.id, partySize: parseInt(partySize) || 1 });
-      setJoinModal(false);
-      fetchData();
-      Alert.alert('✅ Joined Queue', `You're in line for Table ${selectedTable.tableNumber}`);
-    } catch (err: any) {
-      Alert.alert('Error', err.response?.data?.error || 'Failed to join queue');
-    } finally { setJoining(false); }
-  };
-
-  const myQueueEntries = queue.filter((q: any) => q.userId === user?.id);
+    return () => {
+      socket?.off('queue:updated', fetchData);
+      socket?.off('reservation:new', fetchData);
+      socket?.off('reservation:updated', fetchData);
+      socket?.off('table:updated', fetchData);
+    };
+  }, [fetchData, socket]);
 
   if (loading) return <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
+  const myReservations = schedule.filter((entry) => entry.userId === user?.id);
 
-  return (
-    <View style={s.container}>
-      <View style={s.header}>
-        <Text style={s.title}>⏱️ Queue</Text>
-        <Text style={s.subtitle}>{queue.length} people waiting</Text>
-      </View>
-
-      <ScrollView contentContainerStyle={s.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData(); }} tintColor={COLORS.primary} />}>
-
-        {myQueueEntries.length > 0 && (
-          <>
-            <Text style={s.sectionTitle}>Your Queue Position</Text>
-            {myQueueEntries.map((entry: any) => (
-              <View key={entry.id} style={[s.myEntryCard, entry.status === 'CALLED' && s.myEntryCalledCard]}>
-                {entry.status === 'CALLED' && (
-                  <View style={s.calledBanner}><Text style={s.calledBannerTxt}>📢 YOUR TABLE IS READY!</Text></View>
-                )}
-                <Text style={s.myEntryTable}>Table {entry.table?.tableNumber}</Text>
-                <Text style={s.myEntryPos}>Position #{entry.position}</Text>
-                <Text style={s.myEntryStatus}>{entry.status}</Text>
-              </View>
-            ))}
-          </>
-        )}
-
-        <Text style={s.sectionTitle}>Tables</Text>
-        {tables.map((table: any) => {
-          const tableQueue = queue.filter((q: any) => q.tableId === table.id);
-          return (
-            <View key={table.id} style={s.tableCard}>
-              <View style={s.tableTop}>
-                <View>
-                  <Text style={s.tableName}>{table.type === 'VIP' ? '👑 ' : '🎱 '}Table {table.tableNumber}</Text>
-                  <Text style={[s.tableStatus, { color: table.status === 'AVAILABLE' ? COLORS.success : table.status === 'OCCUPIED' ? COLORS.error : COLORS.warning }]}>
-                    {table.status}
-                  </Text>
-                </View>
-                <View style={s.tableRight}>
-                  <Text style={s.tableRate}>₱{table.ratePerHour}/hr</Text>
-                  {tableQueue.length > 0 && (
-                    <Text style={s.tableQueueCount}>{tableQueue.length} waiting</Text>
-                  )}
-                </View>
-              </View>
-
-              {tableQueue.length > 0 && (
-                <View style={s.queueList}>
-                  {tableQueue.slice(0, 3).map((q: any, i: number) => (
-                    <View key={q.id} style={s.queueItem}>
-                      <Text style={s.queuePos}>#{i + 1}</Text>
-                      <Text style={s.queueName}>
-                        {q.user ? `${q.user.firstName} ${q.user.lastName}` : q.walkinName || 'Walk-in'}
-                      </Text>
-                      {q.userId === user?.id && <Text style={s.youTag}>YOU</Text>}
-                    </View>
-                  ))}
-                  {tableQueue.length > 3 && <Text style={s.moreQueue}>+{tableQueue.length - 3} more</Text>}
-                </View>
-              )}
-
-              {table.status !== 'MAINTENANCE' && (
-                <TouchableOpacity
-                  style={[s.joinBtn, table.status === 'AVAILABLE' && s.joinBtnAvailable]}
-                  onPress={() => { setSelectedTable(table); setJoinModal(true); }}
-                >
-                  <Text style={s.joinBtnTxt}>
-                    {table.status === 'AVAILABLE' ? 'Play Now (Join Queue)' : 'Join Queue'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          );
-        })}
-      </ScrollView>
-
-      <Modal visible={joinModal} transparent animationType="slide">
-        <View style={s.overlay}>
-          <View style={s.modal}>
-            <Text style={s.modalTitle}>Join Queue — Table {selectedTable?.tableNumber}</Text>
-            <Text style={s.modalLabel}>Party Size</Text>
-            <View style={s.partySizeRow}>
-              {[1, 2, 3, 4].map(n => (
-                <TouchableOpacity key={n} style={[s.partySizeBtn, partySize === String(n) && s.partySizeBtnActive]} onPress={() => setPartySize(String(n))}>
-                  <Text style={[s.partySizeTxt, partySize === String(n) && s.partySizeTxtActive]}>{n}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={s.modalBtns}>
-              <TouchableOpacity style={s.cancelBtn} onPress={() => setJoinModal(false)}>
-                <Text style={s.cancelTxt}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.confirmBtn} onPress={joinQueue} disabled={joining}>
-                {joining ? <ActivityIndicator color="#000" size="small" /> : <Text style={s.confirmTxt}>Join Queue</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </View>
-  );
+  return <View style={s.container}>
+    <View style={s.header}><Text style={s.title}>⏱️ Reservation Queue</Text><Text style={s.subtitle}>Queue positions are based on table reservations.</Text></View>
+    <ScrollView contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData(); }} tintColor={COLORS.primary} />}>
+      <View style={s.infoCard}><Ionicons name="calendar-outline" size={20} color={COLORS.primary} /><Text style={s.infoText}>To reserve your place for an occupied table, create a reservation for an available time.</Text><TouchableOpacity onPress={() => navigation.navigate('Reservations')}><Text style={s.reserveLink}>View Reservations</Text></TouchableOpacity></View>
+      {myReservations.length > 0 && <><Text style={s.sectionTitle}>Your Upcoming Reservations</Text>{myReservations.map((entry) => <View key={entry.id} style={s.myCard}><Text style={s.myTable}>Table {entry.table?.tableNumber}</Text><Text style={s.myPosition}>Position #{entry.position}</Text><Text style={s.time}>{formatTime(entry.startTime)} – {formatTime(entry.endTime)}</Text><Text style={s.status}>{entry.status === 'PENDING' ? 'Pending staff approval' : 'Approved'}</Text></View>)}</>}
+      <Text style={s.sectionTitle}>Table Schedules</Text>
+      {tables.map((table) => {
+        const tableSchedule = schedule.filter((entry) => entry.tableId === table.id);
+        const activeSession = table.sessions?.[0];
+        return <View key={table.id} style={s.tableCard}>
+          <View style={s.tableTop}><View><Text style={s.tableName}>{table.type === 'VIP' ? '👑 ' : '🎱 '}Table {table.tableNumber}</Text><Text style={[s.tableStatus, { color: table.status === 'AVAILABLE' ? COLORS.success : table.status === 'OCCUPIED' ? COLORS.error : COLORS.warning }]}>{table.status}</Text></View><Text style={s.rate}>₱{table.ratePerHour}/hr</Text></View>
+          {activeSession?.isWalkin && <View style={s.currentSession}><Text style={s.currentSessionTitle}>Current Walk-In</Text><Text style={s.time}>Start: {formatTime(activeSession.startTime)}</Text><Text style={s.time}>End: {activeSession.expectedEndTime ? formatExpectedEnd(activeSession.startTime, activeSession.expectedEndTime) : 'Ongoing'}</Text></View>}
+          {tableSchedule.length === 0 ? <Text style={s.empty}>No upcoming reservations.</Text> : tableSchedule.map((entry) => <View key={entry.id} style={s.scheduleRow}><Text style={s.position}>#{entry.position}</Text><View style={{ flex: 1 }}><Text style={s.time}>{formatTime(entry.startTime)} – {formatTime(entry.endTime)}</Text><Text style={s.rowStatus}>{entry.userId === user?.id ? 'Your reservation' : entry.status === 'PENDING' ? 'Pending reservation' : 'Reserved'}</Text></View></View>)}
+        </View>;
+      })}
+    </ScrollView>
+  </View>;
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },
-  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder },
-  title: { fontSize: 22, fontWeight: '800', color: COLORS.textPrimary },
-  subtitle: { fontSize: 13, color: COLORS.textSecondary },
-  content: { padding: 16, gap: 12 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary },
-  myEntryCard: { backgroundColor: COLORS.surface, borderRadius: 14, padding: 16, gap: 4, borderWidth: 1, borderColor: COLORS.primary + '50' },
-  myEntryCalledCard: { borderColor: COLORS.success, backgroundColor: COLORS.success + '10' },
-  calledBanner: { backgroundColor: COLORS.success, borderRadius: 8, padding: 10, alignItems: 'center' },
-  calledBannerTxt: { color: '#000', fontWeight: '900', fontSize: 14 },
-  myEntryTable: { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
-  myEntryPos: { fontSize: 14, color: COLORS.primary },
-  myEntryStatus: { fontSize: 12, color: COLORS.textMuted },
-  tableCard: { backgroundColor: COLORS.surface, borderRadius: 14, padding: 16, gap: 10, borderWidth: 1, borderColor: COLORS.surfaceBorder },
-  tableTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  tableName: { fontSize: 16, fontWeight: '700', color: COLORS.textPrimary },
-  tableStatus: { fontSize: 12, fontWeight: '600' },
-  tableRight: { alignItems: 'flex-end', gap: 4 },
-  tableRate: { fontSize: 13, color: COLORS.primary, fontWeight: '600' },
-  tableQueueCount: { fontSize: 11, color: COLORS.warning },
-  queueList: { gap: 6 },
-  queueItem: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.surfaceLight, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
-  queuePos: { fontSize: 12, color: COLORS.textMuted, width: 24 },
-  queueName: { flex: 1, fontSize: 13, color: COLORS.textPrimary },
-  youTag: { fontSize: 10, fontWeight: '800', color: COLORS.primary, backgroundColor: COLORS.primary + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  moreQueue: { fontSize: 11, color: COLORS.textMuted, textAlign: 'center' },
-  joinBtn: { backgroundColor: COLORS.surfaceLight, borderRadius: 10, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: COLORS.surfaceBorder },
-  joinBtnAvailable: { backgroundColor: COLORS.primary + '20', borderColor: COLORS.primary },
-  joinBtnTxt: { color: COLORS.textPrimary, fontWeight: '700', fontSize: 13 },
-  overlay: { flex: 1, backgroundColor: '#000000AA', justifyContent: 'flex-end' },
-  modal: { backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 14 },
-  modalTitle: { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },
-  modalLabel: { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
-  partySizeRow: { flexDirection: 'row', gap: 10 },
-  partySizeBtn: { flex: 1, backgroundColor: COLORS.surfaceLight, borderRadius: 10, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: COLORS.surfaceBorder },
-  partySizeBtnActive: { backgroundColor: COLORS.primary + '20', borderColor: COLORS.primary },
-  partySizeTxt: { fontSize: 18, fontWeight: '700', color: COLORS.textMuted },
-  partySizeTxtActive: { color: COLORS.primary },
-  modalBtns: { flexDirection: 'row', gap: 10 },
-  cancelBtn: { flex: 1, backgroundColor: COLORS.surfaceLight, borderRadius: 12, padding: 14, alignItems: 'center' },
-  cancelTxt: { color: COLORS.textPrimary, fontWeight: '700' },
-  confirmBtn: { flex: 1, backgroundColor: COLORS.primary, borderRadius: 12, padding: 14, alignItems: 'center' },
-  confirmTxt: { color: '#000', fontWeight: '700' },
+  container: { flex: 1, backgroundColor: COLORS.background }, center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },
+  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder }, title: { fontSize: 22, fontWeight: '800', color: COLORS.textPrimary }, subtitle: { fontSize: 13, color: COLORS.textSecondary, marginTop: 2 }, content: { padding: 16, gap: 12, paddingBottom: 36 },
+  infoCard: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, backgroundColor: COLORS.primary + '12', borderWidth: 1, borderColor: COLORS.primary + '40', borderRadius: 14, padding: 14 }, infoText: { flex: 1, minWidth: 200, fontSize: 13, lineHeight: 19, color: COLORS.textSecondary }, reserveLink: { color: COLORS.primary, fontSize: 13, fontWeight: '800' },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: COLORS.textPrimary, marginTop: 4 }, myCard: { backgroundColor: COLORS.surface, borderRadius: 14, padding: 14, gap: 3, borderWidth: 1, borderColor: COLORS.primary + '55' }, myTable: { fontSize: 17, fontWeight: '800', color: COLORS.textPrimary }, myPosition: { color: COLORS.primary, fontWeight: '700' }, time: { color: COLORS.textSecondary, fontSize: 13 }, status: { color: COLORS.textMuted, fontSize: 12 },
+  tableCard: { backgroundColor: COLORS.surface, borderRadius: 14, padding: 14, gap: 8, borderWidth: 1, borderColor: COLORS.surfaceBorder }, tableTop: { flexDirection: 'row', justifyContent: 'space-between' }, tableName: { fontSize: 16, fontWeight: '800', color: COLORS.textPrimary }, tableStatus: { fontSize: 12, fontWeight: '700' }, rate: { color: COLORS.primary, fontWeight: '700' }, currentSession: { backgroundColor: COLORS.error + '12', borderRadius: 8, padding: 9, gap: 2 }, currentSessionTitle: { color: COLORS.textSecondary, fontSize: 11, fontWeight: '800', textTransform: 'uppercase' }, empty: { color: COLORS.textMuted, fontSize: 13, fontStyle: 'italic' }, scheduleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.surfaceLight, borderRadius: 8, padding: 9 }, position: { color: COLORS.textMuted, fontWeight: '800', width: 24 }, rowStatus: { color: COLORS.textMuted, fontSize: 11, marginTop: 2 },
 });

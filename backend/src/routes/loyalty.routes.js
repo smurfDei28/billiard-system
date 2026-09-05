@@ -24,7 +24,12 @@ router.post('/grant', authenticate, authorize('ADMIN', 'STAFF'), async (req, res
     if (!membership) return res.status(404).json({ error: 'Member not found' });
 
     const result = await prisma.$transaction(async (tx) => {
-      const mem = await tx.membership.update({ where: { userId }, data: { creditBalance: { increment: creditsAwarded } } });
+      const mem = await tx.membership.update({
+        where: { userId },
+        data: {
+          creditBalance: { increment: creditsAwarded },
+        },
+      });
       const lh = await tx.loyaltyHistory.create({
         data: { userId, trigger: trigger || 'MANUAL_GRANT', creditsAwarded, description: description || 'Manual reward by staff' },
       });
@@ -65,13 +70,19 @@ router.post('/birthday-check', authenticate, async (req, res) => {
     });
     if (alreadyAwarded) return res.json({ awarded: false, reason: 'Already awarded this year' });
 
-    const freeCredits = 60;
+    // The existing wallet reward uses value credits; 120 is one standard-table hour.
+    const freeCredits = 120;
     const membership = await prisma.membership.findUnique({ where: { userId: req.user.id } });
     await prisma.$transaction(async (tx) => {
-      await tx.membership.update({ where: { userId: req.user.id }, data: { creditBalance: { increment: freeCredits } } });
-      await tx.loyaltyHistory.create({ data: { userId: req.user.id, trigger: 'BIRTHDAY', creditsAwarded: freeCredits, description: '🎂 Happy Birthday! Enjoy 1 free hour.' } });
-      await tx.creditTransaction.create({ data: { userId: req.user.id, type: 'LOYALTY_REWARD', amount: freeCredits, balanceBefore: membership.creditBalance, balanceAfter: membership.creditBalance + freeCredits, description: 'Birthday reward - 1 free hour' } });
-      await tx.notification.create({ data: { userId: req.user.id, type: 'BIRTHDAY_REWARD', title: '🎂 Happy Birthday!', message: 'Enjoy 1 free hour of play on us!' } });
+      await tx.membership.update({
+        where: { userId: req.user.id },
+        data: {
+          creditBalance: { increment: freeCredits },
+        },
+      });
+      await tx.loyaltyHistory.create({ data: { userId: req.user.id, trigger: 'BIRTHDAY', creditsAwarded: freeCredits, description: 'Birthday reward: 120 credits (equivalent to one free hour on a Regular table).' } });
+      await tx.creditTransaction.create({ data: { userId: req.user.id, type: 'LOYALTY_REWARD', amount: freeCredits, balanceBefore: membership.creditBalance, balanceAfter: membership.creditBalance + freeCredits, description: 'Birthday reward - 120 credits (one Regular-table hour equivalent)' } });
+      await tx.notification.create({ data: { userId: req.user.id, type: 'BIRTHDAY_REWARD', title: 'Happy Birthday! 🎉', message: "You've received 120 birthday credits — equivalent to 1 free hour on a Regular table. Enjoy your game!" } });
     });
     res.json({ awarded: true, credits: freeCredits });
   } catch { res.status(500).json({ error: 'Birthday check failed' }); }

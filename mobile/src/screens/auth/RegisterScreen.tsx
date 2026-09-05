@@ -4,11 +4,12 @@ import {
   StyleSheet, ScrollView, Alert, ActivityIndicator,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS } from '../../constants';
+import { hasValidPassword, passwordPolicyMessage } from '../../utils/passwordPolicy';
 
-// ─── Field component OUTSIDE RegisterScreen so it doesn't get recreated on every keystroke ───
 const Field = ({
   label, field, placeholder, keyboardType = 'default',
   secureTextEntry = false, hint = '', value, onChangeText, error,
@@ -41,6 +42,7 @@ export default function RegisterScreen({ navigation }: any) {
     dateOfBirth: '', displayName: '',
   });
   const [showPassword, setShowPassword] = useState(false);
+  const [showDobPicker, setShowDobPicker] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -58,11 +60,9 @@ export default function RegisterScreen({ navigation }: any) {
     if (!form.phone) e.phone = 'Phone number is required';
     else if (!/^(\+63|0)[0-9]{10}$/.test(form.phone)) e.phone = 'Enter a valid PH phone number (e.g. 09171234567)';
     if (!form.password) e.password = 'Password is required';
-    else if (form.password.length < 8) e.password = 'At least 8 characters';
-    else if (!/[A-Z]/.test(form.password)) e.password = 'Must include an uppercase letter';
-    else if (!/[0-9]/.test(form.password)) e.password = 'Must include a number';
+    else if (!hasValidPassword(form.password)) e.password = passwordPolicyMessage;
     if (form.password !== form.confirmPassword) e.confirmPassword = 'Passwords do not match';
-    if (form.dateOfBirth && !/^\d{4}-\d{2}-\d{2}$/.test(form.dateOfBirth)) e.dateOfBirth = 'Use format YYYY-MM-DD';
+    if (form.dateOfBirth && !/^\d{4}-\d{2}-\d{2}$/.test(form.dateOfBirth)) e.dateOfBirth = 'Use a valid calendar date';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -71,7 +71,7 @@ export default function RegisterScreen({ navigation }: any) {
     if (!validate()) return;
     setLoading(true);
     try {
-      await register({
+      const data = await register({
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
         email: form.email.trim().toLowerCase(),
@@ -80,9 +80,31 @@ export default function RegisterScreen({ navigation }: any) {
         dateOfBirth: form.dateOfBirth || undefined,
         displayName: form.displayName.trim() || undefined,
       });
+
+      if (data?.requiresEmailVerification) {
+        navigation.replace('VerifyEmail', {
+          email: data.email || form.email.trim().toLowerCase(),
+          message: 'Registration successful. Check your inbox for a verification link.',
+        });
+      } else {
+        Alert.alert('✅ Registered', 'Account created. You can now log in.', [
+          { text: 'OK', onPress: () => navigation.navigate('Login') },
+        ]);
+      }
     } catch (err: any) {
-      const msg = err.response?.data?.error || 'Registration failed. Please try again.';
-      Alert.alert('Registration Failed', msg);
+      const data = err.response?.data;
+      const msg = data?.error || 'Registration failed. Please try again.';
+
+      if (data?.requiresEmailVerification && data?.email) {
+        navigation.replace('VerifyEmail', {
+          email: data.email,
+          message: msg,
+          deliveryFailed: Boolean(data.emailDeliveryFailed),
+          accountExists: err.response?.status === 409,
+        });
+      } else {
+        Alert.alert('Registration Failed', msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -98,7 +120,6 @@ export default function RegisterScreen({ navigation }: any) {
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={22} color={COLORS.textPrimary} />
@@ -107,7 +128,6 @@ export default function RegisterScreen({ navigation }: any) {
           <Text style={styles.subtitle}>Join Saturday Nights Billiard</Text>
         </View>
 
-        {/* Form */}
         <View style={styles.form}>
           <View style={styles.row}>
             <View style={{ flex: 1 }}>
@@ -119,7 +139,7 @@ export default function RegisterScreen({ navigation }: any) {
             </View>
             <View style={{ flex: 1 }}>
               <Field
-                label="Last Name" field="lastName" placeholder="dela Cruz"
+                label="Last Name" field="lastName" placeholder="Dela Cruz"
                 value={form.lastName} onChangeText={(t: string) => update('lastName', t)}
                 error={errors.lastName}
               />
@@ -147,20 +167,41 @@ export default function RegisterScreen({ navigation }: any) {
             error={errors.phone}
           />
 
-          <Field
-            label="Date of Birth (optional)" field="dateOfBirth" placeholder="YYYY-MM-DD"
-            hint="Get a free hour on your birthday! 🎂"
-            value={form.dateOfBirth} onChangeText={(t: string) => update('dateOfBirth', t)}
-            error={errors.dateOfBirth}
-          />
+          <View style={styles.fieldContainer}>
+            <Text style={styles.label}>Date of Birth (optional)</Text>
+            <TouchableOpacity
+              style={[styles.inputWrapper, errors.dateOfBirth ? styles.inputError : null]}
+              onPress={() => setShowDobPicker(true)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.input, !form.dateOfBirth && styles.placeholderLike]}>
+                {form.dateOfBirth || 'Select your birth date'}
+              </Text>
+              <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
+            </TouchableOpacity>
+            <Text style={styles.hint}>Receive 120 birthday credits — equivalent to one Regular-table hour.</Text>
+            {errors.dateOfBirth ? <Text style={styles.errorText}>{errors.dateOfBirth}</Text> : null}
+            {showDobPicker && (
+              <DateTimePicker
+                value={form.dateOfBirth ? new Date(form.dateOfBirth) : new Date('2000-01-01')}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                maximumDate={new Date()}
+                onChange={(_, selectedDate) => {
+                  if (Platform.OS !== 'ios') setShowDobPicker(false);
+                  if (!selectedDate) return;
+                  update('dateOfBirth', selectedDate.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+          </View>
 
-          {/* Password with show/hide */}
           <View style={styles.fieldContainer}>
             <Text style={styles.label}>Password</Text>
-            <View style={[styles.inputWrapper, errors.password && styles.inputError]}>
+            <View style={[styles.inputWrapper, errors.password ? styles.inputError : null]}>
               <TextInput
                 style={styles.input}
-                placeholder="Min 8 chars, 1 uppercase, 1 number"
+                placeholder="8+ chars, uppercase, lowercase, number, special"
                 placeholderTextColor={COLORS.textMuted}
                 value={form.password}
                 onChangeText={(t) => update('password', t)}
@@ -173,11 +214,12 @@ export default function RegisterScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
             {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
+            {!errors.password ? <Text style={styles.hint}>{passwordPolicyMessage}</Text> : null}
           </View>
 
           <View style={styles.fieldContainer}>
             <Text style={styles.label}>Confirm Password</Text>
-            <View style={[styles.inputWrapper, errors.confirmPassword && styles.inputError]}>
+            <View style={[styles.inputWrapper, errors.confirmPassword ? styles.inputError : null]}>
               <TextInput
                 style={styles.input}
                 placeholder="Repeat your password"
@@ -192,7 +234,6 @@ export default function RegisterScreen({ navigation }: any) {
             {errors.confirmPassword ? <Text style={styles.errorText}>{errors.confirmPassword}</Text> : null}
           </View>
 
-          {/* Membership note */}
           <View style={styles.membershipNote}>
             <Ionicons name="information-circle-outline" size={16} color={COLORS.primary} />
             <Text style={styles.membershipNoteText}>
@@ -245,6 +286,7 @@ const styles = StyleSheet.create({
   },
   inputError: { borderColor: COLORS.error },
   input: { flex: 1, height: 50, color: COLORS.textPrimary, fontSize: 15 },
+  placeholderLike: { color: COLORS.textMuted, paddingTop: 14 },
   eyeBtn: { padding: 4 },
   hint: { fontSize: 11, color: COLORS.textMuted },
   errorText: { fontSize: 12, color: COLORS.error },

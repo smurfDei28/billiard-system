@@ -15,6 +15,7 @@ export default function TVDisplayScreen() {
   const [queue, setQueue] = useState<any[]>([]);
   const [activeTournament, setActiveTournament] = useState<any>(null);
   const [calledEntry, setCalledEntry] = useState<any>(null);
+  const [announcement, setAnnouncement] = useState<any>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const callAnim = new Animated.Value(0);
 
@@ -24,10 +25,13 @@ export default function TVDisplayScreen() {
 
     // Clock
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    const resync = setInterval(fetchData, 30000);
 
     // Socket events
     socket?.on('table:updated', fetchData);
     socket?.on('queue:updated', fetchData);
+    socket?.on('reservation:new', fetchData);
+    socket?.on('reservation:updated', fetchData);
     socket?.on('queue:called', ({ entry }: any) => {
       setCalledEntry(entry);
       // Show for 10 seconds then hide
@@ -39,13 +43,25 @@ export default function TVDisplayScreen() {
     });
     socket?.on('tournament:bracketsGenerated', (t: any) => setActiveTournament(t));
     socket?.on('match:completed', fetchData);
+    socket?.on('match:started', fetchData);
+    socket?.on('match:updated', fetchData);
+    socket?.on('notification:broadcast', (message: any) => setAnnouncement(message));
+    socket?.on('connect', () => { joinTV(); fetchData(); });
 
     return () => {
       clearInterval(timer);
+      clearInterval(resync);
       socket?.off('table:updated');
       socket?.off('queue:updated');
+      socket?.off('reservation:new');
+      socket?.off('reservation:updated');
       socket?.off('queue:called');
       socket?.off('tournament:bracketsGenerated');
+      socket?.off('match:completed');
+      socket?.off('match:started');
+      socket?.off('match:updated');
+      socket?.off('notification:broadcast');
+      socket?.off('connect');
     };
   }, [socket]);
 
@@ -58,11 +74,14 @@ export default function TVDisplayScreen() {
       ]);
       setTables(tablesRes.data);
       setQueue(queueRes.data);
-      const active = tournamentsRes.data.find((t: any) => t.status === 'IN_PROGRESS');
-      if (active) {
-        const fullRes = await api.get(`/api/tournaments/${active.id}`);
+      const completed = tournamentsRes.data.filter((t: any) => t.status === 'COMPLETED');
+      // The shared list is newest-first; retain the TV's existing behavior of
+      // highlighting the most recently completed tournament when none is live.
+      const highlighted = tournamentsRes.data.find((t: any) => t.status === 'IN_PROGRESS') || completed[0];
+      if (highlighted) {
+        const fullRes = await api.get(`/api/tournaments/${highlighted.id}`);
         setActiveTournament(fullRes.data);
-      }
+      } else setActiveTournament(null);
     } catch (err) {
       console.error(err);
     }
@@ -92,8 +111,11 @@ export default function TVDisplayScreen() {
         <View style={styles.leftPanel}>
           <Text style={styles.panelTitle}>TABLE STATUS</Text>
           <View style={styles.tableGrid}>
-            {tables.map((table) => (
-              <View
+            {tables.map((table) => {
+              const tableQueue = queue.filter((entry: any) => entry.tableId === table.id);
+              const nextEntry = tableQueue.find((entry: any) => entry.position === 1);
+              const reservation = table.nextReservation || table.reservations?.[0];
+              return <View
                 key={table.id}
                 style={[
                   styles.tableCell,
@@ -108,17 +130,19 @@ export default function TVDisplayScreen() {
                 <View style={[styles.tableCellDot, {
                   backgroundColor: table.status === 'AVAILABLE' ? COLORS.success : COLORS.error,
                 }]} />
-                <Text style={styles.tableCellStatus}>{table.status}</Text>
+                <Text style={styles.tableCellStatus}>{table.status.replace('_', ' ')}</Text>
                 {table.sessions?.[0] && (
                   <Text style={styles.tableCellTime}>
-                    {Math.floor((Date.now() - new Date(table.sessions[0].startTime).getTime()) / 60000)}m
+                    {table.sessions[0].isWalkin && table.sessions[0].expectedEndTime
+                      ? `Until ${new Date(table.sessions[0].expectedEndTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}`
+                      : `${Math.floor((Date.now() - new Date(table.sessions[0].startTime).getTime()) / 60000)}m`}
                   </Text>
                 )}
-                {table.queue?.length > 0 && (
-                  <Text style={styles.tableCellQueue}>{table.queue.length} in queue</Text>
-                )}
+                {tableQueue.length > 0 && <Text style={styles.tableCellQueue}>{tableQueue.length} scheduled</Text>}
+                {nextEntry && <Text style={styles.tableCellNext} numberOfLines={1}>NEXT: {nextEntry.user?.firstName || 'Member'} · {new Date(nextEntry.startTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}</Text>}
+                {reservation && <Text style={styles.tableCellReservation}>Reserved {new Date(reservation.startTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}</Text>}
               </View>
-            ))}
+            })}
           </View>
 
           {/* Stats Row */}
@@ -133,7 +157,7 @@ export default function TVDisplayScreen() {
             </View>
             <View style={styles.statBox}>
               <Text style={[styles.statBoxValue, { color: COLORS.warning }]}>{queue.length}</Text>
-              <Text style={styles.statBoxLabel}>Waiting</Text>
+              <Text style={styles.statBoxLabel}>Scheduled</Text>
             </View>
           </View>
         </View>
@@ -141,17 +165,17 @@ export default function TVDisplayScreen() {
         {/* Right: Queue + Tournament */}
         <View style={styles.rightPanel}>
           {/* Queue */}
-          <Text style={styles.panelTitle}>QUEUE</Text>
+          <Text style={styles.panelTitle}>UPCOMING RESERVATIONS</Text>
           {queue.length === 0 ? (
             <View style={styles.emptyQueue}>
-              <Text style={styles.emptyQueueText}>No one waiting</Text>
+              <Text style={styles.emptyQueueText}>No upcoming reservations</Text>
             </View>
           ) : (
             <ScrollView keyboardShouldPersistTaps="handled" style={styles.queueList}>
-              {queue.slice(0, 8).map((entry: any, index: number) => (
+              {queue.slice(0, 8).map((entry: any) => (
                 <View key={entry.id} style={styles.queueItem}>
                   <View style={styles.queuePosition}>
-                    <Text style={styles.queuePositionText}>#{index + 1}</Text>
+                    <Text style={styles.queuePositionText}>#{entry.position}</Text>
                   </View>
                   <View style={styles.queueInfo}>
                     <Text style={styles.queueName}>
@@ -159,10 +183,10 @@ export default function TVDisplayScreen() {
                         ? `${entry.user.firstName} ${entry.user.lastName}`
                         : entry.walkinName || 'Walk-in'}
                     </Text>
-                    <Text style={styles.queueTable}>Table {entry.table?.tableNumber}</Text>
+                    <Text style={styles.queueTable}>Table {entry.table?.tableNumber} · {new Date(entry.startTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}</Text>
                   </View>
-                  <View style={[styles.queueStatus, { backgroundColor: entry.status === 'CALLED' ? COLORS.success + '30' : COLORS.surfaceLight }]}>
-                    <Text style={[styles.queueStatusText, { color: entry.status === 'CALLED' ? COLORS.success : COLORS.textMuted }]}>
+                  <View style={[styles.queueStatus, { backgroundColor: entry.status === 'APPROVED' ? COLORS.success + '30' : COLORS.surfaceLight }]}>
+                    <Text style={[styles.queueStatusText, { color: entry.status === 'APPROVED' ? COLORS.success : COLORS.textMuted }]}>
                       {entry.status}
                     </Text>
                   </View>
@@ -171,8 +195,10 @@ export default function TVDisplayScreen() {
             </ScrollView>
           )}
 
-          {/* Active Tournament Bracket (simplified) */}
-          {activeTournament && (
+          <TVTournamentPanel tournament={activeTournament} />
+
+          {/* Historical simplified panel retained for source history only. */}
+          {false && activeTournament && (
             <>
               <Text style={[styles.panelTitle, { marginTop: 20 }]}>
                 🏆 {activeTournament.name.toUpperCase()}
@@ -247,6 +273,12 @@ export default function TVDisplayScreen() {
         </Animated.View>
       )}
 
+      {announcement && (
+        <View style={styles.announcementBanner}>
+          <Text style={styles.announcementText}>ANNOUNCEMENT: {announcement.title} — {announcement.message}</Text>
+        </View>
+      )}
+
       {/* Bottom ticker */}
       <View style={styles.ticker}>
         <Text style={styles.tickerText}>
@@ -255,6 +287,42 @@ export default function TVDisplayScreen() {
       </View>
     </View>
   );
+}
+
+const playerName = (entries: any[], userId: string | null) => {
+  const entry = entries?.find((candidate: any) => candidate.userId === userId);
+  return entry?.user?.gamifiedProfile?.displayName || entry?.user?.firstName || 'TBD';
+};
+
+function TVTournamentPanel({ tournament }: any) {
+  if (!tournament) return null;
+  const matches = (tournament.matches || []).filter(Boolean).filter((match: any) => !match.isResetFinal || match.player1Id || match.player2Id || match.status === 'COMPLETED' || match.status === 'IN_PROGRESS');
+  const live = matches.filter((match: any) => match.status === 'IN_PROGRESS');
+  const stages = tournament.format === 'DOUBLE_ELIMINATION'
+    ? ['WINNERS', 'LOSERS', 'GRAND_FINAL', 'RESET_FINAL']
+    : ['WINNERS', 'GRAND_FINAL'];
+  const grouped = stages.map((stage) => ({ stage, matches: matches.filter((match: any) => (match.bracketStage || 'WINNERS') === stage) })).filter((group) => group.matches.length);
+  if (!grouped.length && matches.length) grouped.push({ stage: 'RESULTS', matches });
+  return <View style={styles.tvTournamentPanel}>
+    <Text style={[styles.panelTitle, { marginTop: 20 }]}>TOURNAMENT</Text>
+    <Text style={styles.tvTournamentName}>{tournament.name}</Text>
+    <Text style={styles.tournamentFormat}>{tournament.format.replace(/_/g, ' ')} · Race To {tournament.raceTo || 5} · {tournament.entries?.length || 0} Players</Text>
+    {tournament.status === 'COMPLETED' && <View style={styles.tvChampion}><Text style={styles.tvChampionLabel}>CHAMPION</Text><Text style={styles.tvChampionName}>{tournament.championTitle?.user?.gamifiedProfile?.displayName || tournament.championTitle?.user?.firstName || 'Tournament complete'}</Text></View>}
+    {live.length > 0 && <><Text style={styles.tvLiveHeading}>LIVE NOW</Text>{live.map((match: any) => <TVMatch key={match.id} match={match} tournament={tournament} live />)}</>}
+    {grouped.map((group) => <View key={group.stage}><Text style={styles.tvStageTitle}>{group.stage === 'WINNERS' ? 'Winners Bracket' : group.stage === 'LOSERS' ? 'Losers Bracket' : group.stage === 'GRAND_FINAL' ? 'Grand Final' : group.stage === 'RESET_FINAL' ? 'Reset Final' : 'Results'}</Text>{group.matches.filter((match: any) => match.status !== 'IN_PROGRESS').slice(0, 6).map((match: any) => <TVMatch key={match.id} match={match} tournament={tournament} />)}</View>)}
+    {!matches.length && <Text style={styles.emptyQueueText}>Bracket not generated yet</Text>}
+  </View>;
+}
+
+function TVMatch({ match, tournament, live = false }: any) {
+  if (!match) return null;
+  const p1 = playerName(tournament.entries, match.player1Id);
+  const p2 = playerName(tournament.entries, match.player2Id);
+  return <View style={[styles.matchCard, live && styles.tvMatchLive]}>
+    <Text style={styles.matchRound}>{match.isResetFinal ? 'Reset Final' : match.isGrandFinal ? 'Grand Final' : `Round ${match.round} · Match ${match.matchNumber}`}{match.table?.tableNumber ? ` · Table ${match.table.tableNumber}` : ''}</Text>
+    <Text style={styles.tvMatchNames}>{p1} <Text style={styles.matchVSText}>vs</Text> {p2}</Text>
+    {match.status === 'BYE' ? <Text style={styles.tvMatchDetail}>BYE — Auto advance</Text> : <Text style={styles.tvMatchDetail}>{live ? 'LIVE' : match.status === 'COMPLETED' ? `${match.player1Score} – ${match.player2Score}` : match.scheduledAt ? new Date(match.scheduledAt).toLocaleString('en-PH', { dateStyle: 'short', timeStyle: 'short' }) : 'Upcoming'}</Text>}
+  </View>;
 }
 
 const styles = StyleSheet.create({
@@ -287,6 +355,8 @@ const styles = StyleSheet.create({
   tableCellStatus: { fontSize: 10, color: COLORS.textSecondary, fontWeight: '700' },
   tableCellTime: { fontSize: 12, color: COLORS.warning },
   tableCellQueue: { fontSize: 10, color: COLORS.info },
+  tableCellNext: { fontSize: 10, color: COLORS.primary, fontWeight: '800', maxWidth: '100%' },
+  tableCellReservation: { fontSize: 9, color: COLORS.warning, textAlign: 'center' },
   statsRow: { flexDirection: 'row', gap: 10 },
   statBox: {
     flex: 1, backgroundColor: COLORS.surface, borderRadius: 12,
@@ -316,6 +386,16 @@ const styles = StyleSheet.create({
   queueStatus: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   queueStatusText: { fontSize: 11, fontWeight: '700' },
   tournamentFormat: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 10 },
+  tvTournamentPanel: { marginTop: 2 },
+  tvTournamentName: { color: COLORS.gold, fontSize: 18, fontWeight: '900', marginBottom: 3 },
+  tvLiveHeading: { color: COLORS.error, fontSize: 12, fontWeight: '900', letterSpacing: 2, marginTop: 8, marginBottom: 5 },
+  tvStageTitle: { color: COLORS.primary, fontSize: 11, fontWeight: '900', letterSpacing: 1, marginTop: 12, marginBottom: 5 },
+  tvChampion: { backgroundColor: COLORS.gold + '20', borderWidth: 1, borderColor: COLORS.gold + '80', borderRadius: 10, padding: 10, marginBottom: 8 },
+  tvChampionLabel: { color: COLORS.gold, fontWeight: '900', fontSize: 10, letterSpacing: 1 },
+  tvChampionName: { color: COLORS.textPrimary, fontWeight: '900', fontSize: 17 },
+  tvMatchLive: { borderColor: COLORS.error, borderWidth: 2 },
+  tvMatchNames: { color: COLORS.textPrimary, fontWeight: '800', fontSize: 13, textAlign: 'center' },
+  tvMatchDetail: { color: COLORS.textSecondary, fontSize: 11, textAlign: 'center' },
   matchList: { maxHeight: 220 },
   matchCard: {
     backgroundColor: COLORS.surface, borderRadius: 10,
@@ -350,4 +430,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary, paddingHorizontal: 20, paddingVertical: 10,
   },
   tickerText: { color: '#000', fontSize: 13, fontWeight: '600' },
+  announcementBanner: { backgroundColor: COLORS.warning + '25', borderTopWidth: 1, borderTopColor: COLORS.warning, paddingHorizontal: 20, paddingVertical: 10 },
+  announcementText: { color: COLORS.warning, fontSize: 14, fontWeight: '800', textAlign: 'center' },
 });

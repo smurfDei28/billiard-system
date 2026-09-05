@@ -9,7 +9,6 @@ const TEMPLATES = [
   { icon: '🎱', label: 'Tournament Announce', title: 'Tournament This Weekend!', message: 'Join us this Saturday for our billiard tournament. Registration open until Friday. Entry fee: ₱50. Prizes await!' },
   { icon: '🎉', label: 'Promo', title: 'Special Promo Today!', message: 'Double credits on all top-ups today only! Visit our cashier to avail.' },
   { icon: '⚠️', label: 'Maintenance', title: 'Scheduled Maintenance', message: 'We will be performing table maintenance this Sunday morning 8AM–10AM. Sorry for the inconvenience.' },
-  { icon: '🎂', label: 'Birthday Greeting', title: 'Happy Birthday from Saturday Nights!', message: 'We appreciate your loyalty. Come visit us and claim your birthday reward!' },
   { icon: '🌙', label: 'Closing Soon', title: 'Closing in 30 Minutes', message: 'Saturday Nights Billiard will be closing in 30 minutes. Please settle your tables. Thank you!' },
 ];
 

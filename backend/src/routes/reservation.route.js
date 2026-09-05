@@ -4,6 +4,7 @@ const {
   requestReservation,
   approveReservation,
   declineReservation,
+  cancelMyReservation,
   getMyReservations,
   getPendingReservations,
   getAllReservations,
@@ -13,6 +14,7 @@ const { authenticate, requireRole } = require('../middleware/auth.middleware');
 // Member
 router.post('/', authenticate, requireRole('MEMBER'), requestReservation);
 router.get('/my', authenticate, requireRole('MEMBER'), getMyReservations);
+router.patch('/:reservationId/cancel', authenticate, requireRole('MEMBER'), cancelMyReservation);
 
 // Staff + Admin
 router.get('/pending', authenticate, requireRole('STAFF', 'ADMIN'), getPendingReservations);

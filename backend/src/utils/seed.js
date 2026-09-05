@@ -82,12 +82,12 @@ async function main() {
 
   // ─── Billiard Tables ───
   const tables = [
-    { tableNumber: 1, type: 'STANDARD', ratePerHour: 60 },
-    { tableNumber: 2, type: 'STANDARD', ratePerHour: 60 },
-    { tableNumber: 3, type: 'STANDARD', ratePerHour: 60 },
-    { tableNumber: 4, type: 'STANDARD', ratePerHour: 60 },
-    { tableNumber: 5, type: 'VIP', ratePerHour: 120 },
-    { tableNumber: 6, type: 'VIP', ratePerHour: 120 },
+    { tableNumber: 1, type: 'STANDARD', ratePerHour: 120 },
+    { tableNumber: 2, type: 'STANDARD', ratePerHour: 120 },
+    { tableNumber: 3, type: 'STANDARD', ratePerHour: 120 },
+    { tableNumber: 4, type: 'STANDARD', ratePerHour: 120 },
+    { tableNumber: 5, type: 'VIP', ratePerHour: 200 },
+    { tableNumber: 6, type: 'VIP', ratePerHour: 200 },
   ];
 
   for (const table of tables) {
@@ -100,40 +100,92 @@ async function main() {
   console.log('✅ 6 billiard tables created (4 Standard, 2 VIP)');
 
   // ─── Products / Inventory ───
-  const products = [
-    // Rice Meals
-    { name: 'Sinangag Express', category: 'RICE_MEAL', price: 85, stock: 50 },
-    { name: 'Tapsilog', category: 'RICE_MEAL', price: 95, stock: 30 },
-    { name: 'Longsilog', category: 'RICE_MEAL', price: 90, stock: 30 },
-    // Drinks
-    { name: 'Bottled Water', category: 'DRINKS', price: 20, stock: 100 },
-    { name: 'Softdrinks (Regular)', category: 'DRINKS', price: 35, stock: 80 },
-    { name: 'Iced Tea (Large)', category: 'DRINKS', price: 45, stock: 60 },
-    { name: 'Sports Drink (Gatorade)', category: 'DRINKS', price: 55, stock: 40 },
-    // Alcoholic Beverages
-    { name: 'Red Horse Beer', category: 'ALCOHOLIC_BEVERAGES', price: 65, stock: 50 },
-    { name: 'San Miguel Pale Pilsen', category: 'ALCOHOLIC_BEVERAGES', price: 60, stock: 50 },
-    { name: 'Tanduay Ice', category: 'ALCOHOLIC_BEVERAGES', price: 55, stock: 30 },
-    { name: 'Emperador Light', category: 'ALCOHOLIC_BEVERAGES', price: 180, stock: 20 },
-    // Coffee
-    { name: 'Brewed Coffee', category: 'COFFEE', price: 50, stock: 100 },
-    { name: '3-in-1 Coffee', category: 'COFFEE', price: 25, stock: 100 },
-    { name: 'Iced Coffee', category: 'COFFEE', price: 65, stock: 50 },
-    // Billiard Equipment
+  const makeProductId = (name) => `prod_${name.replace(/\s/g, '_').toLowerCase()}`;
+
+  // Current menu (Apr 2026). Note: equipment list stays unchanged.
+  const menuProducts = [
+    // Main Dishes (Rice Meals)
+    { name: 'Hotsilog', category: 'RICE_MEAL', price: 110, stock: 30 },
+    { name: 'Tocilog', category: 'RICE_MEAL', price: 120, stock: 30 },
+    { name: 'Longsilog', category: 'RICE_MEAL', price: 125, stock: 30 },
+    { name: 'Sisigsilog', category: 'RICE_MEAL', price: 135, stock: 25 },
+    { name: 'Sisig', category: 'RICE_MEAL', price: 180, stock: 20 },
+
+    // Snacks / Sides / Add-ons
+    { name: 'French Fries', category: 'SNACKS', price: 90, stock: 40 },
+    { name: 'Cheese Sticks', category: 'SNACKS', price: 120, stock: 40 },
+    { name: 'Shanghai', category: 'SNACKS', price: 145, stock: 35 },
+    { name: 'Cup Noodles', category: 'SNACKS', price: 35, stock: 80 },
+    { name: 'Pancit Canton', category: 'SNACKS', price: 35, stock: 80 },
+    { name: 'Chips', category: 'SNACKS', price: 25, stock: 80 },
+    { name: 'Extra Rice', category: 'SNACKS', price: 20, stock: 80 },
+    { name: 'Extra Egg', category: 'SNACKS', price: 20, stock: 80 },
+
+    // Beverages (Alcohol)
+    { name: 'Red Horse', category: 'ALCOHOLIC_BEVERAGES', price: 95, stock: 60 },
+    { name: 'San Mig Light', category: 'ALCOHOLIC_BEVERAGES', price: 85, stock: 60 },
+    { name: 'San Mig Pale Pilsen', category: 'ALCOHOLIC_BEVERAGES', price: 75, stock: 60 },
+    { name: 'Smirnoff Mule', category: 'ALCOHOLIC_BEVERAGES', price: 75, stock: 40 },
+    { name: 'Alfonso', category: 'ALCOHOLIC_BEVERAGES', price: 400, stock: 15 },
+
+    // Beverages (Non-alcohol)
+    { name: 'Coke', category: 'DRINKS', price: 25, stock: 120 },
+    { name: 'Royal', category: 'DRINKS', price: 25, stock: 120 },
+    { name: 'Mountain Dew', category: 'DRINKS', price: 25, stock: 120 },
+    { name: 'Mineral Water (large)', category: 'DRINKS', price: 35, stock: 120 },
+    { name: 'Coke 1.5', category: 'DRINKS', price: 120, stock: 30 },
+
+    // Coffee (remove 3-in-1; add cafe-style options avg ₱90–₱120)
+    { name: 'Americano (Hot)', category: 'COFFEE', price: 95, stock: 100 },
+    { name: 'Latte (Hot)', category: 'COFFEE', price: 110, stock: 100 },
+    { name: 'Cappuccino (Hot)', category: 'COFFEE', price: 110, stock: 100 },
+    { name: 'Mocha (Hot)', category: 'COFFEE', price: 120, stock: 100 },
+    { name: 'Iced Latte', category: 'COFFEE', price: 120, stock: 100 },
+    { name: 'Caramel Macchiato', category: 'COFFEE', price: 120, stock: 100 },
+  ];
+
+  // Billiard Equipment (do not change anything here)
+  const equipmentProducts = [
     { name: 'Cue Chalk', category: 'BILLIARD_EQUIPMENT', price: 25, stock: 30 },
     { name: 'Billiard Glove', category: 'BILLIARD_EQUIPMENT', price: 150, stock: 15 },
     { name: 'Cue Tip Replacement', category: 'BILLIARD_EQUIPMENT', price: 80, stock: 20 },
     { name: 'Triangle Rack', category: 'BILLIARD_EQUIPMENT', price: 200, stock: 10 },
   ];
 
-  for (const product of products) {
+  for (const product of menuProducts) {
+    const id = makeProductId(product.name);
     await prisma.product.upsert({
-      where: { id: `prod_${product.name.replace(/\s/g, '_').toLowerCase()}` },
-      update: {},
-      create: { id: `prod_${product.name.replace(/\s/g, '_').toLowerCase()}`, ...product },
+      where: { id },
+      update: {
+        name: product.name,
+        category: product.category,
+        price: product.price,
+        stock: product.stock,
+        isActive: true,
+      },
+      create: { id, ...product, lowStockAt: 5, isActive: true },
     });
   }
-  console.log('✅ Products seeded (Rice Meals, Drinks, Alcohol, Coffee, Equipment)');
+
+  for (const product of equipmentProducts) {
+    const id = makeProductId(product.name);
+    await prisma.product.upsert({
+      where: { id },
+      update: {},
+      create: { id, ...product, lowStockAt: 5, isActive: true },
+    });
+  }
+
+  // Deactivate explicitly removed menu items
+  const removedItems = [
+    '3-in-1 Coffee',
+  ];
+  for (const name of removedItems) {
+    const id = makeProductId(name);
+    await prisma.product.updateMany({ where: { id }, data: { isActive: false } });
+  }
+
+  console.log('✅ Products seeded/updated (menu + equipment)');
 
   console.log('\n🎱 Database seeded successfully!');
   console.log('\n📋 Login Credentials:');
@@ -150,3 +202,4 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
+

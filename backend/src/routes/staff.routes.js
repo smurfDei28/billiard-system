@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../config/prisma');
 const { authenticate, authorize } = require('../middleware/auth.middleware');
+const { summarizeRevenue } = require('../utils/revenueReporting');
 
 // Get all staff actions log (admin only)
 router.get('/actions', authenticate, authorize('ADMIN'), async (req, res) => {
@@ -50,22 +51,30 @@ router.get('/daily-report', authenticate, authorize('ADMIN', 'STAFF'), async (re
     const end = new Date(start);
     end.setHours(23, 59, 59, 999);
 
-    const [sessions, orders, topups, newMembers, queueTotal] = await Promise.all([
+    const [sessions, orders, topups, tournamentPayments, walletTournamentFees, newMembers, queueTotal] = await Promise.all([
       prisma.tableSession.findMany({ where: { createdAt: { gte: start, lte: end } }, include: { table: true } }),
-      prisma.order.findMany({ where: { createdAt: { gte: start, lte: end } }, include: { items: { include: { product: true } } } }),
+      prisma.order.findMany({ where: { createdAt: { gte: start, lte: end }, paymentStatus: 'PAID', status: { not: 'VOIDED' } }, include: { items: { include: { product: true } } } }),
       prisma.creditTransaction.findMany({ where: { type: 'TOPUP', createdAt: { gte: start, lte: end } } }),
+      prisma.manualPayment.findMany({ where: { purpose: 'TOURNAMENT_ENTRY', status: 'APPROVED', reviewedAt: { gte: start, lte: end } }, select: { amount: true, createdAt: true, reviewedAt: true } }),
+      prisma.creditTransaction.findMany({ where: { type: 'TOURNAMENT_FEE', createdAt: { gte: start, lte: end } }, select: { amount: true, createdAt: true } }),
       prisma.user.count({ where: { role: 'MEMBER', createdAt: { gte: start, lte: end } } }),
       prisma.queueEntry.count({ where: { joinedAt: { gte: start, lte: end } } }),
     ]);
 
-    const tableRevenue = sessions.reduce((s, sess) => s + (sess.creditsUsed || 0), 0);
-    const posRevenue = orders.reduce((s, o) => s + o.total, 0);
-    const creditsToppedup = topups.reduce((s, t) => s + t.amount, 0);
+    const revenue = summarizeRevenue({ orders, topups, tournamentPayments, sessions, walletTournamentFees });
 
     res.json({
       date: start.toISOString().split('T')[0],
-      tableRevenue, posRevenue, creditsToppedup,
-      totalRevenue: tableRevenue + posRevenue,
+      // Same definition as /api/analytics: external money collected once.
+      totalRevenue: revenue.cashRevenue,
+      cashRevenue: revenue.cashRevenue,
+      posSalesValue: revenue.posSalesValue,
+      cashPosSales: revenue.cashPosSales,
+      creditPosSales: revenue.creditPosSales,
+      tableUsageValue: revenue.tableUsageValue,
+      creditTopups: revenue.creditTopups,
+      tournamentCashCollections: revenue.tournamentCashCollections,
+      walletTournamentFeeValue: revenue.walletTournamentFeeValue,
       sessionsCount: sessions.filter(s => s.status === 'ENDED').length,
       activeSessionsCount: sessions.filter(s => s.status === 'ACTIVE').length,
       ordersCount: orders.length,

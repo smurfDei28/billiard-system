@@ -8,12 +8,17 @@ import UserManagementScreen from '../screens/admin/UserManagementScreen';
 import TournamentManagementScreen from '../screens/admin/TournamentManagementScreen';
 import AnnouncementsScreen from '../screens/admin/AnnouncementsScreen';
 import ReportsScreen from '../screens/admin/ReportsScreen';
+import PaymentVerificationScreen from '../screens/staff/PaymentVerificationScreen';
+import AdminNotificationsScreen from '../screens/admin/AdminNotificationsScreen';
+import { useFeatures } from '../context/FeatureContext';
 
 const Tab = createBottomTabNavigator();
 
 export function AdminNavigator() {
+  const { hasModule } = useFeatures();
   return (
     <Tab.Navigator
+      backBehavior="history"
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
@@ -34,6 +39,8 @@ export function AdminNavigator() {
             Tournaments: focused ? 'trophy' : 'trophy-outline',
             Announce: focused ? 'megaphone' : 'megaphone-outline',
             Reports: focused ? 'bar-chart' : 'bar-chart-outline',
+            Payments: focused ? 'card' : 'card-outline',
+            Notifications: focused ? 'notifications' : 'notifications-outline',
           };
           // Safe fallback using a known valid Ionicons name
           const iconName = icons[route.name] ?? 'ellipse-outline';
@@ -41,11 +48,13 @@ export function AdminNavigator() {
         },
       })}
     >
-      <Tab.Screen name="Dashboard" component={AdminDashboardScreen} />
+      {hasModule('REPORTS_ANALYTICS') && <Tab.Screen name="Dashboard" component={AdminDashboardScreen} />}
       <Tab.Screen name="Users" component={UserManagementScreen} />
-      <Tab.Screen name="Tournaments" component={TournamentManagementScreen} />
-      <Tab.Screen name="Announce" component={AnnouncementsScreen} />
-      <Tab.Screen name="Reports" component={ReportsScreen} />
+      {hasModule('TOURNAMENTS') && <Tab.Screen name="Tournaments" component={TournamentManagementScreen} />}
+      {hasModule('REPORTS_ANALYTICS') && <Tab.Screen name="Reports" component={ReportsScreen} />}
+      {hasModule('CREDITS_PAYMENTS') && <Tab.Screen name="Payments" component={PaymentVerificationScreen} />}
+      <Tab.Screen name="Announce" component={AnnouncementsScreen} options={{ tabBarButton: () => null }} />
+      {hasModule('NOTIFICATIONS') && <Tab.Screen name="Notifications" component={AdminNotificationsScreen} options={{ tabBarButton: () => null }} />}
     </Tab.Navigator>
   );
 }

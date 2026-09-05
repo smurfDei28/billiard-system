@@ -1,23 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const prisma = require('../config/prisma');
-const { joinQueue, getQueue, getTableQueue, removeFromQueue } = require('../controllers/queue.controller');
+const { getQueue, getTableQueue, callQueueEntry, removeFromQueue } = require('../controllers/queue.controller');
 const { authenticate, authorize, optionalAuth } = require('../middleware/auth.middleware');
 
-router.get('/', authenticate, authorize('STAFF', 'ADMIN'), getQueue);
+router.get('/', authenticate, getQueue);
 router.get('/table/:tableId', authenticate, getTableQueue);
-router.get('/available-tables', authenticate, async (req, res) => {
-  try {
-    const available = await prisma.billiardTable.count({
-      where: { status: 'AVAILABLE' },
-    });
-    res.json({ availableCount: available });
-  } catch (err) {
-    console.error('[Available Tables Error]', err);
-    res.status(500).json({ error: 'Failed to get available tables' });
-  }
-});
-router.post('/join', optionalAuth, joinQueue);
+// QueueEntry records remain readable for compatibility, but new Member queue
+// positions are only created through reservations.
+router.post('/join', optionalAuth, (req, res) => res.status(410).json({ error: 'Queue positions are reservation-based. Please create a reservation instead.' }));
+router.patch('/:entryId/leave', authenticate, (req, res) => res.status(410).json({ error: 'Queue positions are reservation-based. Cancel the related reservation instead.' }));
+router.patch('/:entryId/call', authenticate, authorize('STAFF', 'ADMIN'), callQueueEntry);
 router.patch('/:entryId/remove', authenticate, authorize('STAFF', 'ADMIN'), removeFromQueue);
 
 module.exports = router;

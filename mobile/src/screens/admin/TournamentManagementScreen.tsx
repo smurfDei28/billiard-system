@@ -14,7 +14,6 @@ import { COLORS } from '../../constants';
 const FORMATS = [
   { key: 'SINGLE_ELIMINATION', label: 'Single Elimination', desc: "Lose once and you're out" },
   { key: 'DOUBLE_ELIMINATION', label: 'Double Elimination', desc: 'Two losses to be eliminated' },
-  { key: 'ROUND_ROBIN', label: 'Round Robin', desc: 'Everyone plays everyone' },
 ];
 
 const GAME_TYPES = [
@@ -38,18 +37,24 @@ const GAME_LABELS: Record<string, string> = {
 };
 
 const ENTRY_STATUS_COLORS: Record<string, string> = {
-  PENDING_PAYMENT: '#f59e0b',
-  PENDING_APPROVAL: '#3b82f6',
+  PENDING_PAYMENT: COLORS.warning,
+  PENDING_APPROVAL: COLORS.info,
   APPROVED: COLORS.success,
   CANCELLED: COLORS.error,
 };
 
-/** Minimum start: 3 days from now */
-const minStartDate = () => {
+/** Minimum start: 3 days from now (or +1h in test mode) */
+const minStartDate = (testMode = false) => {
   const d = new Date();
-  d.setDate(d.getDate() + 3);
+  if (!testMode) d.setDate(d.getDate() + 3);
   d.setHours(d.getHours() + 1, 0, 0, 0);
   return d;
+};
+const registrationDeadlineFor = (start: Date) => {
+  const oneDayBefore = new Date(start.getTime() - 24 * 60 * 60 * 1000);
+  // Test-mode tournaments may begin in one hour, so keep their default
+  // deadline meaningfully before the start without placing it in the past.
+  return oneDayBefore > new Date() ? oneDayBefore : new Date(start.getTime() - 30 * 60 * 1000);
 };
 
 const formatDuration = (minutes: number) => {
@@ -78,12 +83,13 @@ const Field = ({ label, value, onChange, placeholder, keyboardType, multiline }:
 );
 
 const DatePickerField = ({
-  label, value, onChange, minimumDate,
+  label, value, onChange, minimumDate, minimumLabel,
 }: {
   label: string;
   value: Date;
   onChange: (d: Date) => void;
   minimumDate?: Date;
+  minimumLabel?: string;
 }) => {
   const [show, setShow] = useState(false);
   const [mode, setMode] = useState<'date' | 'time'>('date');
@@ -98,7 +104,7 @@ const DatePickerField = ({
     if (minimumDate && selected < minimumDate) {
       Alert.alert(
         'Invalid Date',
-        `The date must be at least 3 days from today (${minimumDate.toLocaleDateString('en-PH')}).`
+        `The date must be at least ${minimumLabel || '3 days'} from today (${minimumDate.toLocaleDateString('en-PH')}).`
       );
       return;
     }
@@ -137,7 +143,7 @@ const DatePickerField = ({
 
 // ─── Main Screen ─────────────────────────────────────────────────────────────
 
-export default function TournamentManagementScreen() {
+export default function TournamentManagementScreen({ navigation }: any) {
   const [tournaments, setTournaments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -148,16 +154,21 @@ export default function TournamentManagementScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [cancelModal, setCancelModal] = useState<{ entryId: string; name: string } | null>(null);
   const [cancelNote, setCancelNote] = useState('');
+  const [payoutConfirm, setPayoutConfirm] = useState(false);
 
+  const initialStartDate = minStartDate(false);
   const [form, setForm] = useState({
     name: '',
     format: 'SINGLE_ELIMINATION',
     gameType: 'EIGHT_BALL',
     maxPlayers: '8',
+    raceTo: '5',
     entryFee: '0',
     prizePool: '0',
     description: '',
-    startDate: minStartDate(),
+    registrationDeadline: registrationDeadlineFor(initialStartDate),
+    startDate: initialStartDate,
+    testMode: false,
   });
 
   const fetchTournaments = useCallback(async () => {
@@ -196,12 +207,18 @@ export default function TournamentManagementScreen() {
   // ── Create Tournament ──
   const createTournament = async () => {
     if (!form.name.trim()) return Alert.alert('Error', 'Tournament name is required');
+    const raceTo = Number(form.raceTo);
+    if (!Number.isInteger(raceTo) || raceTo < 1 || raceTo > 99) return Alert.alert('Invalid Race To', 'Race To must be a whole number from 1 to 99.');
+    if (form.registrationDeadline >= form.startDate) return Alert.alert('Invalid Registration Deadline', 'Registration must close before the tournament starts.');
+    if (form.format === 'DOUBLE_ELIMINATION' && ![4, 8].includes(Number(form.maxPlayers))) return Alert.alert('Unsupported Double Elimination Size', 'Double Elimination currently supports exactly 4 or 8 players.');
 
-    const minDate = minStartDate();
+    const minDate = minStartDate(!!form.testMode);
     if (form.startDate < minDate) {
       return Alert.alert(
         'Invalid Date',
-        'Tournament must be scheduled at least 3 days in advance.'
+        form.testMode
+          ? 'Start date must be at least 1 hour from now (test mode).'
+          : 'Tournament must be scheduled at least 3 days in advance.'
       );
     }
 
@@ -212,10 +229,13 @@ export default function TournamentManagementScreen() {
         format: form.format,
         gameType: form.gameType,
         maxPlayers: parseInt(form.maxPlayers),
+        raceTo,
         entryFee: parseFloat(form.entryFee) || 0,
         prizePool: parseFloat(form.prizePool) || 0,
         description: form.description,
+        registrationDeadline: form.registrationDeadline.toISOString(),
         startDate: form.startDate.toISOString(),
+        testMode: !!form.testMode,
       });
       fetchTournaments();
       setCreateModal(false);
@@ -223,6 +243,22 @@ export default function TournamentManagementScreen() {
     } catch (err: any) {
       Alert.alert('Error', err.response?.data?.error || 'Failed to create tournament');
     } finally { setActionLoading(false); }
+  };
+
+  const closeRegistration = async () => {
+    if (!selectedT) return;
+    Alert.alert('Close Registration', `Close registration for ${selectedT.name} and generate the bracket from eligible paid entries?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Close Registration', onPress: async () => {
+        setActionLoading(true);
+        try {
+          const { data } = await api.post(`/api/tournaments/${selectedT.id}/close-registration`);
+          await refreshSelectedTournament(selectedT.id);
+          Alert.alert(data.alreadyClosed ? 'Registration Already Closed' : 'Registration Closed', data.bracketGenerated ? 'The bracket is ready.' : 'Registration is closed. A bracket could not yet be generated.');
+        } catch (err: any) { Alert.alert('Unable to Close Registration', err.response?.data?.error || 'Please try again.'); }
+        finally { setActionLoading(false); }
+      } },
+    ]);
   };
 
   // ── Generate Brackets ──
@@ -285,6 +321,19 @@ export default function TournamentManagementScreen() {
     } finally { setActionLoading(false); }
   };
 
+  const confirmCashPayout = async () => {
+    if (!selectedT) return;
+    setActionLoading(true);
+    try {
+      const { data } = await api.post(`/api/tournaments/${selectedT.id}/payout/mark-paid`);
+      setPayoutConfirm(false);
+      await refreshSelectedTournament(selectedT.id);
+      Alert.alert(data.alreadyPaid ? 'Already Paid' : 'Cash Prize Paid', data.alreadyPaid ? 'This cash prize was already recorded as paid.' : 'The cash prize payment has been recorded.');
+    } catch (err: any) {
+      Alert.alert('Payout Not Recorded', err.response?.data?.error || 'Unable to record the cash prize payment.');
+    } finally { setActionLoading(false); }
+  };
+
   // ── Report Match Result ──
   const reportResult = async (
     matchId: string,
@@ -293,6 +342,11 @@ export default function TournamentManagementScreen() {
     p2Score: number,
     tournamentId: string
   ) => {
+    // Final score entry is intentionally owned by the Staff Matches workflow.
+    // Keep this historical Admin bracket affordance read-only so it cannot send
+    // obsolete synthetic 1–0 results.
+    Alert.alert('Use Staff Matches', 'Submit the actual final score from the Staff Matches tab.');
+    return;
     setActionLoading(true);
     try {
       const res = await api.patch(`/api/tournaments/matches/${matchId}/result`, {
@@ -358,7 +412,7 @@ export default function TournamentManagementScreen() {
               </View>
             </View>
             <Text style={s.cardMetaTxt}>
-              👥 {t._count?.entries || 0}/{t.maxPlayers} ·{' '}
+              👥 {t.activePlayerCount || 0}/{t.maxPlayers} ·{' '}
               📅 {new Date(t.startDate).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}{' '}
               {new Date(t.startDate).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
               {t.estimatedDuration ? ` · ⏱ ${formatDuration(t.estimatedDuration)}` : ''}
@@ -370,7 +424,7 @@ export default function TournamentManagementScreen() {
       </ScrollView>
 
       {/* ── Create Tournament Modal ── */}
-      <Modal visible={createModal} animationType="slide">
+      <Modal visible={createModal} animationType="slide" onRequestClose={() => !actionLoading && setCreateModal(false)}>
         <View style={s.modal}>
           <View style={s.modalHeader}>
             <TouchableOpacity onPress={() => setCreateModal(false)}>
@@ -433,17 +487,42 @@ export default function TournamentManagementScreen() {
             </View>
 
             <Field
-              label="Prize Pool (₱)" value={form.prizePool}
-              onChange={(v: string) => setForm(f => ({ ...f, prizePool: v }))}
-              keyboardType="decimal-pad"
+              label="Race To" value={form.raceTo}
+              onChange={(v: string) => setForm(f => ({ ...f, raceTo: v }))}
+              placeholder="5"
+              keyboardType="numeric"
             />
 
-            {/* Date + Time Picker (at least 3 days out) */}
+            <View style={s.durationHint}><Ionicons name="trophy-outline" size={14} color={COLORS.gold}/><Text style={s.durationHintTxt}>Prize pool is calculated automatically from successfully paid registration fees and locks when the tournament starts.</Text></View>
+
+            {/* Test Mode */}
+            <TouchableOpacity
+              style={[s.testModeRow, form.testMode && s.testModeRowActive]}
+              onPress={() => setForm((f: any) => { const startDate = minStartDate(!f.testMode); return { ...f, testMode: !f.testMode, startDate, registrationDeadline: registrationDeadlineFor(startDate) }; })}
+              activeOpacity={0.85}
+            >
+              <View style={[s.testModeCheck, form.testMode && s.testModeCheckOn]}>
+                {form.testMode && <Ionicons name="checkmark" size={14} color="#000" />}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.testModeTitle}>Test mode</Text>
+                <Text style={s.testModeSub}>Allow start date within 3 days (requires backend `ALLOW_TOURNAMENT_TEST_MODE=true`).</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Date + Time Picker */}
             <DatePickerField
-              label="Start Date & Time (min. 3 days from today)"
+              label="Registration Deadline"
+              value={form.registrationDeadline}
+              onChange={(d: Date) => setForm(f => ({ ...f, registrationDeadline: d }))}
+            />
+
+            <DatePickerField
+              label={form.testMode ? 'Start Date & Time (min. 1 hour from now)' : 'Start Date & Time (min. 3 days from today)'}
               value={form.startDate}
               onChange={(d: Date) => setForm(f => ({ ...f, startDate: d }))}
-              minimumDate={minStartDate()}
+              minimumDate={minStartDate(!!form.testMode)}
+              minimumLabel={form.testMode ? '1 hour' : '3 days'}
             />
 
             {/* Estimated Duration Preview */}
@@ -478,16 +557,21 @@ export default function TournamentManagementScreen() {
       </Modal>
 
       {/* ── Tournament Detail Modal ── */}
-      <Modal visible={!!selectedT} animationType="slide">
+      <Modal visible={!!selectedT} animationType="slide" onRequestClose={() => !actionLoading && setSelectedT(null)}>
         <View style={s.modal}>
           <View style={s.modalHeader}>
             <TouchableOpacity onPress={() => setSelectedT(null)}>
               <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
             </TouchableOpacity>
             <Text style={s.modalTitle} numberOfLines={1}>{selectedT?.name}</Text>
-            <TouchableOpacity onPress={() => selectedT && refreshSelectedTournament(selectedT.id)}>
-              <Ionicons name="refresh" size={22} color={COLORS.primary} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+              <TouchableOpacity onPress={() => navigation.navigate('TV')}>
+                <Ionicons name="tv-outline" size={22} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => selectedT && refreshSelectedTournament(selectedT.id)}>
+                <Ionicons name="refresh" size={22} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.modalContent}>
@@ -503,7 +587,7 @@ export default function TournamentManagementScreen() {
                   <Text style={s.infoFormat}>
                     {GAME_LABELS[selectedT.gameType] || selectedT.gameType} ·{' '}
                     {selectedT.format.replace(/_/g, ' ')} ·{' '}
-                    {selectedT.entries?.length || 0}/{selectedT.maxPlayers} players
+                    {selectedT.activePlayerCount || 0}/{selectedT.maxPlayers} active players
                   </Text>
                   <Text style={s.infoMeta}>
                     📅 {new Date(selectedT.startDate).toLocaleDateString('en-PH', {
@@ -514,6 +598,8 @@ export default function TournamentManagementScreen() {
                   {selectedT.estimatedDuration && (
                     <Text style={s.infoMeta}>⏱ Est. Duration: {formatDuration(selectedT.estimatedDuration)}</Text>
                   )}
+                  <Text style={s.infoMeta}>Race To {selectedT.raceTo || 5}</Text>
+                  {selectedT.registrationDeadline && <Text style={s.infoMeta}>Registration closes {new Date(selectedT.registrationDeadline).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}</Text>}
                   {selectedT.description && <Text style={s.infoDesc}>{selectedT.description}</Text>}
                 </View>
 
@@ -550,7 +636,7 @@ export default function TournamentManagementScreen() {
                           </View>
                           {entry.paymentMethod && (
                             <Text style={s.pendingMeta}>
-                              💳 {entry.paymentMethod}{entry.paymentRef ? ` — Ref: ${entry.paymentRef}` : ''}
+                              Payment: {entry.paymentMethod}
                             </Text>
                           )}
                         </View>
@@ -576,6 +662,12 @@ export default function TournamentManagementScreen() {
                   </>
                 )}
 
+                {(selectedT.status === 'REGISTRATION_OPEN' || selectedT.status === 'UPCOMING') && (
+                  <TouchableOpacity style={s.closeRegistrationBtn} onPress={closeRegistration} disabled={actionLoading}>
+                    {actionLoading ? <ActivityIndicator color={COLORS.textPrimary} size="small" /> : <><Ionicons name="lock-closed-outline" size={18} color={COLORS.textPrimary} /><Text style={s.closeRegistrationTxt}>Close Registration</Text></>}
+                  </TouchableOpacity>
+                )}
+
                 {/* Generate Brackets */}
                 {(selectedT.status === 'REGISTRATION_OPEN' || selectedT.status === 'UPCOMING') &&
                   selectedT.entries?.filter((e: any) => e.status === 'APPROVED' || e.status === 'CHECKED_IN').length >= 2 && (
@@ -596,7 +688,7 @@ export default function TournamentManagementScreen() {
                 <Text style={s.sectionTitle}>
                   Players ({selectedT.entries?.filter((e: any) => e.status === 'APPROVED').length || 0} approved)
                 </Text>
-                {selectedT.entries?.map((entry: any, i: number) => (
+                {selectedT.entries?.filter((entry: any) => ['PENDING_APPROVAL', 'APPROVED', 'CHECKED_IN', 'WINNER'].includes(entry.status)).map((entry: any, i: number) => (
                   <View key={entry.id} style={s.playerRow}>
                     <Text style={s.playerIdx}>#{i + 1}</Text>
                     <Text style={s.playerName}>
@@ -671,13 +763,13 @@ export default function TournamentManagementScreen() {
                                       `Who won Match ${match.matchNumber}?`,
                                       [
                                         { text: 'Cancel', style: 'cancel' },
-                                        { text: `🏆 ${p1Name}`, onPress: () => reportResult(match.id, match.player1Id, 1, 0, selectedT.id) },
-                                        { text: `🏆 ${p2Name}`, onPress: () => reportResult(match.id, match.player2Id, 0, 1, selectedT.id) },
+                                        { text: p1Name, onPress: () => Alert.alert('Use Staff Matches', 'Submit the actual final score from the Staff Matches tab.') },
+                                        { text: p2Name, onPress: () => Alert.alert('Use Staff Matches', 'Submit the actual final score from the Staff Matches tab.') },
                                       ]
                                     )}
                                   >
                                     <Ionicons name="trophy-outline" size={14} color={COLORS.gold} />
-                                    <Text style={s.winBtnTxt}>Report Winner</Text>
+                                    <Text style={s.winBtnTxt}>Use Staff Matches for Scores</Text>
                                   </TouchableOpacity>
                                 ) : (
                                   <Text style={s.matchWaiting}>⏳ Waiting for previous round</Text>
@@ -690,6 +782,14 @@ export default function TournamentManagementScreen() {
                     })}
                   </>
                 )}
+
+                {selectedT.status === 'COMPLETED' && <View style={s.payoutCard}>
+                  <Text style={s.payoutTitle}>Winner-Takes-All Cash Payout</Text>
+                  <Text style={s.payoutMeta}>Champion: {selectedT.championTitle?.user?.gamifiedProfile?.displayName || selectedT.championTitle?.user?.firstName || 'Champion not recorded'}</Text>
+                  <Text style={s.payoutAmount}>₱{Number(selectedT.finalPrizePool || 0).toFixed(2)}</Text>
+                  <Text style={s.payoutMeta}>Method: Cash · {selectedT.payout?.status === 'PAID' ? `Paid ${selectedT.payout.paidAt ? new Date(selectedT.payout.paidAt).toLocaleString('en-PH') : ''}` : 'Pending confirmation'}</Text>
+                  {selectedT.payout?.status === 'PAID' ? <View style={s.paidBadge}><Text style={s.paidBadgeTxt}>PAID · CASH</Text></View> : selectedT.championTitle && Number(selectedT.finalPrizePool) > 0 ? <TouchableOpacity style={s.payoutBtn} onPress={() => setPayoutConfirm(true)} disabled={actionLoading}><Text style={s.payoutBtnTxt}>Mark Prize as Paid</Text></TouchableOpacity> : <Text style={s.payoutUnavailable}>A persisted champion and positive finalized prize pool are required.</Text>}
+                </View>}
 
                 {selectedT.status === 'COMPLETED' && (
                   <View style={s.completeBanner}>
@@ -708,7 +808,22 @@ export default function TournamentManagementScreen() {
       </Modal>
 
       {/* ── Cancel Entry Modal ── */}
-      <Modal visible={!!cancelModal} transparent animationType="fade">
+      <Modal visible={payoutConfirm} transparent animationType="fade" onRequestClose={() => setPayoutConfirm(false)}>
+        <View style={s.overlay}>
+          <View style={s.dialogBox}>
+            <Text style={s.dialogTitle}>Confirm Cash Prize Payout</Text>
+            <Text style={s.dialogBody}>Champion: <Text style={{ fontWeight: '800', color: COLORS.textPrimary }}>{selectedT?.championTitle?.user?.gamifiedProfile?.displayName || selectedT?.championTitle?.user?.firstName}</Text></Text>
+            <Text style={s.dialogBody}>Cash Prize: <Text style={{ fontWeight: '800', color: COLORS.gold }}>₱{Number(selectedT?.finalPrizePool || 0).toFixed(2)}</Text></Text>
+            <Text style={s.dialogBody}>Confirm that this cash prize has been handed to the champion. This does not add wallet credits.</Text>
+            <View style={s.dialogActions}>
+              <TouchableOpacity style={s.dialogCancelBtn} onPress={() => setPayoutConfirm(false)} disabled={actionLoading}><Text style={s.dialogCancelTxt}>Back</Text></TouchableOpacity>
+              <TouchableOpacity style={s.payoutConfirmBtn} onPress={confirmCashPayout} disabled={actionLoading}>{actionLoading ? <ActivityIndicator color="#000" size="small" /> : <Text style={s.payoutConfirmTxt}>Confirm Paid</Text>}</TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!cancelModal} transparent animationType="fade" onRequestClose={() => !actionLoading && setCancelModal(null)}>
         <View style={s.overlay}>
           <View style={s.dialogBox}>
             <Text style={s.dialogTitle}>Cancel Registration</Text>
@@ -795,6 +910,12 @@ const s = StyleSheet.create({
   dateRow: { flexDirection: 'row', gap: 8 },
   dateBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, borderWidth: 1, borderColor: COLORS.surfaceBorder },
   dateBtnTxt: { fontSize: 13, color: COLORS.textPrimary, fontWeight: '600' },
+  testModeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surface },
+  testModeRowActive: { borderColor: COLORS.warning, backgroundColor: COLORS.warning + '10' },
+  testModeCheck: { width: 22, height: 22, borderRadius: 6, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surfaceLight, justifyContent: 'center', alignItems: 'center' },
+  testModeCheckOn: { borderColor: COLORS.warning, backgroundColor: COLORS.warning },
+  testModeTitle: { fontSize: 13, fontWeight: '800', color: COLORS.textPrimary },
+  testModeSub: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
   durationHint: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.surfaceLight || COLORS.surface, borderRadius: 8, padding: 10 },
   durationHintTxt: { fontSize: 12, color: COLORS.textMuted },
   submitBtn: { backgroundColor: COLORS.primary, borderRadius: 14, height: 52, justifyContent: 'center', alignItems: 'center', marginTop: 8 },
@@ -804,10 +925,10 @@ const s = StyleSheet.create({
   infoFormat: { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary },
   infoMeta: { fontSize: 13, color: COLORS.textSecondary },
   infoDesc: { fontSize: 13, color: COLORS.textSecondary },
-  pendingToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#f59e0b20', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#f59e0b' },
-  pendingBadge: { backgroundColor: '#f59e0b', borderRadius: 10, width: 22, height: 22, justifyContent: 'center', alignItems: 'center' },
+  pendingToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.warning + '20', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: COLORS.warning },
+  pendingBadge: { backgroundColor: COLORS.warning, borderRadius: 10, width: 22, height: 22, justifyContent: 'center', alignItems: 'center' },
   pendingBadgeTxt: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  pendingToggleTxt: { flex: 1, fontSize: 14, fontWeight: '700', color: '#f59e0b' },
+  pendingToggleTxt: { flex: 1, fontSize: 14, fontWeight: '700', color: COLORS.warning },
   pendingCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: COLORS.surfaceBorder },
   pendingName: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
   pendingMeta: { fontSize: 11, color: COLORS.textMuted },
@@ -819,6 +940,8 @@ const s = StyleSheet.create({
   entryStatusTxt: { fontSize: 10, fontWeight: '700' },
   generateBtn: { backgroundColor: COLORS.primary, borderRadius: 14, height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   generateTxt: { color: '#000', fontWeight: '800', fontSize: 15 },
+  closeRegistrationBtn: { backgroundColor: COLORS.surfaceLight, borderRadius: 14, minHeight: 48, borderWidth: 1, borderColor: COLORS.surfaceBorder, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  closeRegistrationTxt: { color: COLORS.textPrimary, fontWeight: '800', fontSize: 14 },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: COLORS.textPrimary },
   playerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.surface, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: COLORS.surfaceBorder },
   playerIdx: { fontSize: 13, color: COLORS.textMuted, width: 24 },
@@ -842,6 +965,15 @@ const s = StyleSheet.create({
   completeBanner: { backgroundColor: COLORS.gold + '20', borderRadius: 14, padding: 20, alignItems: 'center', gap: 6, borderWidth: 1, borderColor: COLORS.gold },
   completeBannerTxt: { fontSize: 18, fontWeight: '800', color: COLORS.gold },
   completeWinnerTxt: { fontSize: 14, color: COLORS.textPrimary, fontWeight: '600' },
+  payoutCard: { backgroundColor: COLORS.surface, borderRadius: 14, padding: 16, gap: 7, borderWidth: 1, borderColor: COLORS.gold + '80' },
+  payoutTitle: { color: COLORS.gold, fontSize: 15, fontWeight: '800' },
+  payoutMeta: { color: COLORS.textSecondary, fontSize: 12 },
+  payoutAmount: { color: COLORS.textPrimary, fontSize: 24, fontWeight: '900' },
+  payoutBtn: { backgroundColor: COLORS.primary, borderRadius: 10, minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 3 },
+  payoutBtnTxt: { color: '#000', fontWeight: '900' },
+  paidBadge: { backgroundColor: COLORS.success + '20', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, alignSelf: 'flex-start' },
+  paidBadgeTxt: { color: COLORS.success, fontSize: 11, fontWeight: '900' },
+  payoutUnavailable: { color: COLORS.textMuted, fontSize: 12 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   dialogBox: { backgroundColor: COLORS.surface, borderRadius: 18, padding: 24, gap: 14, width: '100%' },
   dialogTitle: { fontSize: 17, fontWeight: '800', color: COLORS.textPrimary },
@@ -852,4 +984,6 @@ const s = StyleSheet.create({
   dialogCancelTxt: { color: COLORS.textSecondary, fontWeight: '600' },
   dialogConfirmBtn: { flex: 1, height: 44, borderRadius: 10, backgroundColor: COLORS.error, justifyContent: 'center', alignItems: 'center' },
   dialogConfirmTxt: { color: '#fff', fontWeight: '700' },
+  payoutConfirmBtn: { flex: 1, height: 44, borderRadius: 10, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
+  payoutConfirmTxt: { color: '#000', fontWeight: '800' },
 });

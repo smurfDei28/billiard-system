@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
+import { api } from '../../context/AuthContext';
 import { COLORS } from '../../constants';
 
 export default function LoginScreen({ navigation }: any) {
@@ -15,6 +16,9 @@ export default function LoginScreen({ navigation }: any) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [forgotModal, setForgotModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -31,10 +35,36 @@ export default function LoginScreen({ navigation }: any) {
     try {
       await login(email.trim().toLowerCase(), password);
     } catch (err: any) {
-      const msg = err.response?.data?.error || 'Login failed. Please try again.';
-      Alert.alert('Login Failed', msg);
+      const data = err.response?.data;
+      const msg = data?.error || 'Login failed. Please try again.';
+
+      if (data?.requiresEmailVerification && data?.email) {
+        navigation.navigate('VerifyEmail', {
+          email: data.email,
+          message: msg,
+        });
+      } else {
+        Alert.alert('Login Failed', msg);
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const requestPasswordReset = async () => {
+    const target = (forgotEmail || email).trim().toLowerCase();
+    if (!target) return Alert.alert('Missing Email', 'Enter your email address first.');
+
+    setForgotLoading(true);
+    try {
+      await api.post('/api/auth/forgot-password', { email: target });
+      setForgotModal(false);
+      setForgotEmail('');
+      Alert.alert('Check your email', 'If your email is verified, we sent a password reset link.');
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.error || 'Failed to request password reset.');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -59,7 +89,7 @@ export default function LoginScreen({ navigation }: any) {
           {/* Email */}
           <View style={styles.fieldContainer}>
             <Text style={styles.label}>Email Address</Text>
-            <View style={[styles.inputWrapper, errors.email && styles.inputError]}>
+            <View style={[styles.inputWrapper, errors.email ? styles.inputError : null]}>
               <Ionicons name="mail-outline" size={18} color={COLORS.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -78,7 +108,7 @@ export default function LoginScreen({ navigation }: any) {
           {/* Password */}
           <View style={styles.fieldContainer}>
             <Text style={styles.label}>Password</Text>
-            <View style={[styles.inputWrapper, errors.password && styles.inputError]}>
+            <View style={[styles.inputWrapper, errors.password ? styles.inputError : null]}>
               <Ionicons name="lock-closed-outline" size={18} color={COLORS.textMuted} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -93,6 +123,12 @@ export default function LoginScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
             {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
+          </View>
+
+          <View style={{ alignItems: 'flex-end', marginTop: -8 }}>
+            <TouchableOpacity onPress={() => { setForgotEmail(email); setForgotModal(true); }}>
+              <Text style={{ color: COLORS.primary, fontWeight: '700', fontSize: 13 }}>Forgot password?</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Login Button */}
@@ -116,17 +152,46 @@ export default function LoginScreen({ navigation }: any) {
               <Text style={styles.registerLink}>Register</Text>
             </TouchableOpacity>
           </View>
-
-          {/* TV Display Link */}
-          <TouchableOpacity
-            style={styles.tvBtn}
-            onPress={() => navigation.navigate('TV')}
-          >
-            <Ionicons name="tv-outline" size={16} color={COLORS.textMuted} />
-            <Text style={styles.tvBtnText}>TV Display Mode</Text>
-          </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Forgot Password Modal */}
+      {forgotModal && (
+        <View style={{
+          position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
+          backgroundColor: '#000000AA', justifyContent: 'center', padding: 24,
+        }}>
+          <View style={{ backgroundColor: COLORS.surface, borderRadius: 16, padding: 16, gap: 12, borderWidth: 1, borderColor: COLORS.surfaceBorder }}>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: COLORS.textPrimary }}>Reset Password</Text>
+            <Text style={{ fontSize: 13, color: COLORS.textSecondary }}>
+              Enter your verified email. We’ll send a reset link.
+            </Text>
+            <View style={[styles.inputWrapper]}>
+              <Ionicons name="mail-outline" size={18} color={COLORS.textMuted} style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="your@email.com"
+                placeholderTextColor={COLORS.textMuted}
+                value={forgotEmail}
+                onChangeText={setForgotEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+            <TouchableOpacity
+              style={[styles.loginBtn, forgotLoading && styles.loginBtnDisabled]}
+              onPress={requestPasswordReset}
+              disabled={forgotLoading}
+            >
+              {forgotLoading ? <ActivityIndicator color="#000" /> : <Text style={styles.loginBtnText}>Send Reset Link</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setForgotModal(false)} style={{ alignItems: 'center', paddingVertical: 6 }}>
+              <Text style={{ color: COLORS.textMuted, fontWeight: '600' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -176,12 +241,4 @@ const styles = StyleSheet.create({
   registerRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 8 },
   registerText: { color: COLORS.textSecondary, fontSize: 14 },
   registerLink: { color: COLORS.primary, fontSize: 14, fontWeight: '700' },
-  tvBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'center', gap: 6,
-    marginTop: 16, padding: 12,
-    borderRadius: 10, borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-  },
-  tvBtnText: { color: COLORS.textMuted, fontSize: 13 },
 });

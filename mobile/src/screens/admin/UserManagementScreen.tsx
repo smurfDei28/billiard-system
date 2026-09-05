@@ -6,6 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../context/AuthContext';
 import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS } from '../../constants';
+import { hasValidPassword, passwordPolicyMessage } from '../../utils/passwordPolicy';
 
 // ── Field component defined OUTSIDE to prevent keyboard bug ──────────────────
 const Field = ({ label, value, onChange, placeholder, keyboardType, secureTextEntry, autoCapitalize }: any) => (
@@ -67,12 +68,8 @@ export default function UserManagementScreen() {
       return Alert.alert('Missing Fields', 'Please fill in all required fields.');
     if (password !== confirmPassword)
       return Alert.alert('Password Mismatch', 'Passwords do not match.');
-    if (password.length < 8)
-      return Alert.alert('Weak Password', 'Password must be at least 8 characters.');
-    if (!/[A-Z]/.test(password))
-      return Alert.alert('Weak Password', 'Password must contain at least one uppercase letter.');
-    if (!/[0-9]/.test(password))
-      return Alert.alert('Weak Password', 'Password must contain at least one number.');
+    if (!hasValidPassword(password))
+      return Alert.alert('Weak Password', passwordPolicyMessage);
     if (!/^(\+63|0)[0-9]{10}$/.test(phone))
       return Alert.alert('Invalid Phone', 'Enter a valid Philippine phone number (e.g. 09171234567).');
 
@@ -161,7 +158,7 @@ export default function UserManagementScreen() {
       </ScrollView>
 
       {/* ── Create Staff Modal ── */}
-      <Modal visible={createStaffModal} animationType="slide">
+      <Modal visible={createStaffModal} animationType="slide" onRequestClose={() => !staffLoading && setCreateStaffModal(false)}>
         <View style={s.modal}>
           <View style={s.modalHeader}>
             <TouchableOpacity onPress={() => setCreateStaffModal(false)}><Ionicons name="close" size={24} color={COLORS.textPrimary} /></TouchableOpacity>
@@ -179,9 +176,9 @@ export default function UserManagementScreen() {
             </View>
             <Field label="Email Address *" value={staffForm.email} onChange={(v: string) => setStaffForm(f => ({ ...f, email: v }))} placeholder="staff@saturdaynights.ph" keyboardType="email-address" />
             <Field label="Phone Number *" value={staffForm.phone} onChange={(v: string) => setStaffForm(f => ({ ...f, phone: v }))} placeholder="09171234567" keyboardType="phone-pad" />
-            <Field label="Password *" value={staffForm.password} onChange={(v: string) => setStaffForm(f => ({ ...f, password: v }))} placeholder="Min 8 chars, 1 uppercase, 1 number" secureTextEntry />
+            <Field label="Password *" value={staffForm.password} onChange={(v: string) => setStaffForm(f => ({ ...f, password: v }))} placeholder="8+ chars, uppercase, lowercase, number, special" secureTextEntry />
             <Field label="Confirm Password *" value={staffForm.confirmPassword} onChange={(v: string) => setStaffForm(f => ({ ...f, confirmPassword: v }))} placeholder="Re-enter password" secureTextEntry />
-            <View style={s.passwordHint}><Text style={s.passwordHintTxt}>Requirements: at least 8 characters, 1 uppercase letter, 1 number.</Text></View>
+            <View style={s.passwordHint}><Text style={s.passwordHintTxt}>{passwordPolicyMessage}</Text></View>
             <TouchableOpacity style={[s.submitBtn, staffLoading && s.submitBtnDis]} onPress={createStaff} disabled={staffLoading}>
               {staffLoading ? <ActivityIndicator color="#000" /> : <><Ionicons name="person-add-outline" size={18} color="#000" /><Text style={s.submitTxt}>Create Staff Account</Text></>}
             </TouchableOpacity>
@@ -190,7 +187,7 @@ export default function UserManagementScreen() {
       </Modal>
 
       {/* ── User Detail Modal ── */}
-      <Modal visible={!!selectedUser} animationType="slide">
+      <Modal visible={!!selectedUser} animationType="slide" onRequestClose={() => !actionLoading && setSelectedUser(null)}>
         <View style={s.modal}>
           <View style={s.modalHeader}>
             <TouchableOpacity onPress={() => setSelectedUser(null)}><Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} /></TouchableOpacity>

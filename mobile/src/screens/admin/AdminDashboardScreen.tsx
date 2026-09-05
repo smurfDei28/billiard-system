@@ -1,15 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  RefreshControl, ActivityIndicator,
+  RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../context/AuthContext';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, RANK_CONFIG } from '../../constants';
 
-export default function AdminDashboardScreen() {
-  const { user } = useAuth();
+export default function AdminDashboardScreen({ navigation }: any) {
+  const { user, logout } = useAuth();
   const [data, setData] = useState<any>(null);
   const [sales, setSales] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -40,22 +40,54 @@ export default function AdminDashboardScreen() {
 
       {/* Header */}
       <View style={s.header}>
-        <Text style={s.greeting}>Admin Dashboard</Text>
-        <Text style={s.date}>{new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={s.greeting}>Admin Dashboard</Text>
+            <Text style={s.date}>{new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity
+              style={{ padding: 8, borderRadius: 10, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surface }}
+              onPress={() => navigation.navigate('TV')}
+            >
+              <Ionicons name="tv-outline" size={18} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ padding: 8, borderRadius: 10, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surface }}
+              onPress={() => {
+                Alert.alert('Sign Out', 'Sign out of the admin account?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Sign Out', style: 'destructive', onPress: logout },
+                ]);
+              }}
+            >
+              <Ionicons name="log-out-outline" size={18} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
 
       {/* KPI Cards */}
       <View style={s.kpiGrid}>
-        <KPICard icon="cash-outline" label="Today's Revenue" value={`₱${(summary.todayRevenue || 0).toFixed(0)}`} color={COLORS.success} sub={`${summary.todaySessions || 0} sessions + ${summary.todayOrders || 0} orders`} />
+        <KPICard
+          icon="cash-outline"
+          label="Today's Cash Revenue"
+          value={`₱${(summary.todayRevenue || 0).toFixed(0)}`}
+          color={COLORS.success}
+          sub="External collections only"
+        />
         <KPICard icon="people-outline" label="Total Members" value={summary.totalMembers || 0} color={COLORS.info} sub="Registered accounts" />
         <KPICard icon="grid-outline" label="Active Tables" value={summary.activeSessionsCount || 0} color={COLORS.error} sub="Currently playing" />
         <KPICard icon="time-outline" label="Queue" value={summary.queueCount || 0} color={COLORS.warning} sub="Currently waiting" />
       </View>
 
-      {/* 7-Day Revenue Chart (bar chart) */}
+      {/* 7-Day cash-collection chart */}
       <View style={s.card}>
-        <Text style={s.cardTitle}>7-Day Revenue</Text>
-        <Text style={s.cardSub}>Total: ₱{(sales?.totalRevenue || 0).toFixed(0)} · {sales?.totalOrders || 0} POS orders</Text>
+        <Text style={s.cardTitle}>7-Day Cash Revenue</Text>
+        <Text style={s.cardSub}>
+          Cash Revenue: ₱{(sales?.cashRevenueTotal || 0).toFixed(0)} · POS Sales: ₱{(sales?.posSalesValueTotal || 0).toFixed(0)} · Credit Top-ups: ₱{(sales?.creditTopupsTotal || 0).toFixed(0)}
+        </Text>
         <View style={s.barChart}>
           {(sales?.dailySales || []).map((day: any) => {
             const pct = maxRevenue > 0 ? (day.revenue / maxRevenue) : 0;
@@ -78,7 +110,8 @@ export default function AdminDashboardScreen() {
         <View style={s.card}>
           <Text style={s.cardTitle}>POS by Category</Text>
           {sales.categoryBreakdown.map((cat: any) => {
-            const pct = sales.totalRevenue > 0 ? cat.revenue / (sales?.dailySales?.reduce((s: number, d: any) => s + d.revenue, 0) || 1) : 0;
+            const denom = sales?.posSalesValueTotal || 0;
+            const pct = denom > 0 ? cat.revenue / denom : 0;
             return (
               <View key={cat.category} style={s.catRow}>
                 <Text style={s.catName}>{cat.category.replace(/_/g, ' ')}</Text>

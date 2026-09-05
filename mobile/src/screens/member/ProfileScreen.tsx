@@ -5,10 +5,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth, api } from '../../context/AuthContext';
-import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS } from '../../constants';
+import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS, rankProgressForXp } from '../../constants';
+import { formatCredits } from '../../utils/credits';
 
 const BADGES: Record<string, { icon: string; label: string }> = {
   first_win:    { icon: '🏆', label: 'First Win' },
+  first_tournament_win: { icon: '👑', label: 'First Tournament Win' },
   ten_games:    { icon: '🎱', label: '10 Games' },
   fifty_games:  { icon: '⚡', label: '50 Games' },
   streak_5:     { icon: '🔥', label: '5 Win Streak' },
@@ -17,7 +19,7 @@ const BADGES: Record<string, { icon: string; label: string }> = {
   birthday:     { icon: '🎂', label: 'Birthday' },
 };
 
-export default function ProfileScreen() {
+export default function ProfileScreen({ route }: any) {
   const { user, logout } = useAuth();
   const [data, setData] = useState<any>(null);
   const [loyalty, setLoyalty] = useState<any[]>([]);
@@ -26,6 +28,13 @@ export default function ProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [logoutModal, setLogoutModal] = useState(false);
   const [tab, setTab] = useState<'stats' | 'loyalty' | 'history'>('stats');
+
+  useEffect(() => {
+    const initial = route?.params?.initialTab;
+    if (initial === 'stats' || initial === 'loyalty' || initial === 'history') {
+      setTab(initial);
+    }
+  }, [route?.params?.initialTab]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -51,11 +60,17 @@ export default function ProfileScreen() {
   const plan = membership?.plan || 'BASIC';
   const planCfg = MEMBERSHIP_PLANS[plan as keyof typeof MEMBERSHIP_PLANS];
   const winRate = profile?.totalGames > 0 ? Math.round((profile.totalWins / profile.totalGames) * 100) : 0;
-  const xpToNext = (profile?.level || 1) * 100;
-  const xpPct = ((profile?.xp || 0) % 100) / 100;
-  const hoursPlayed = (membership?.totalHoursPlayed || 0).toFixed(1);
-  const hoursProgress = ((membership?.totalHoursPlayed || 0) % 20) / 20;
-  const hoursToNext = (20 - ((membership?.totalHoursPlayed || 0) % 20)).toFixed(1);
+  const rankProgress = rankProgressForXp(profile?.xp || 0);
+  const xpToNext = rankProgress.next?.minXp;
+  const xpPct = rankProgress.progress;
+  const milestoneIntervalHours = 20;
+  const totalHoursPlayed = Number(membership?.totalHoursPlayed || 0);
+  const hoursPlayed = totalHoursPlayed.toFixed(1);
+  // A Member's progress is the remainder within the recurring 20-hour cycle,
+  // never progress toward a cumulative lifetime threshold.
+  const currentMilestoneHours = totalHoursPlayed % milestoneIntervalHours;
+  const hoursProgress = currentMilestoneHours / milestoneIntervalHours;
+  const hoursToNext = (milestoneIntervalHours - currentMilestoneHours).toFixed(1);
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}
@@ -86,7 +101,7 @@ export default function ProfileScreen() {
         <View style={s.xpSection}>
           <View style={s.xpRow}>
             <Text style={s.xpLevel}>Level {profile?.level || 1}</Text>
-            <Text style={s.xpCount}>{profile?.xp || 0} / {xpToNext} XP</Text>
+            <Text style={s.xpCount}>{xpToNext ? `${profile?.xp || 0} / ${xpToNext} XP` : 'Max rank'}</Text>
           </View>
           <View style={s.xpBar}><View style={[s.xpFill, { width: `${xpPct * 100}%`, backgroundColor: rankCfg.color }]} /></View>
         </View>
@@ -94,7 +109,7 @@ export default function ProfileScreen() {
         {/* Credits row */}
         <View style={s.creditsRow}>
           {[
-            { icon: 'wallet', color: COLORS.primary, val: (membership?.creditBalance || 0).toFixed(0), lbl: 'Credits' },
+            { icon: 'wallet', color: COLORS.primary, val: formatCredits(membership?.creditBalance), lbl: 'Credits' },
             { icon: 'time', color: COLORS.info, val: `${hoursPlayed}h`, lbl: 'Played' },
             { icon: 'trophy', color: COLORS.gold, val: `${hoursToNext}h`, lbl: 'To Free Hour' },
           ].map((item, i) => (
@@ -161,7 +176,7 @@ export default function ProfileScreen() {
               <View key={r} style={[s.rankStep, r === rank && { borderColor: cfg.color, backgroundColor: cfg.color + '15' }]}>
                 <Text style={s.rankStepIcon}>{cfg.icon}</Text>
                 <Text style={[s.rankStepName, { color: r === rank ? cfg.color : COLORS.textMuted }]}>{r}</Text>
-                <Text style={s.rankStepReq}>{cfg.minWins}+</Text>
+                <Text style={s.rankStepReq}>{cfg.minXp}+ XP</Text>
               </View>
             ))}
           </View>
@@ -172,21 +187,23 @@ export default function ProfileScreen() {
       {tab === 'loyalty' && (
         <View style={s.section}>
           <View style={s.milestoneCard}>
-            <Text style={s.milestoneTitle}>Next Milestone — {Math.ceil((membership?.totalHoursPlayed || 0) / 20) * 20} hours</Text>
+            <Text style={s.milestoneTitle}>20-Hour Playing Milestone</Text>
             <View style={s.milestoneBar}><View style={[s.milestoneBarFill, { width: `${Math.min(100, hoursProgress * 100)}%` }]} /></View>
-            <Text style={s.milestoneHint}>🎁 Play {hoursToNext} more hours → 1 FREE hour (60 credits)</Text>
+            <Text style={s.milestoneHint}>🎁 {currentMilestoneHours.toFixed(1)} / {milestoneIntervalHours} hours · {hoursToNext} hours remaining → 120 credits (one Regular-table hour)</Text>
           </View>
 
           <Text style={s.sectionTitle}>Ways to Earn</Text>
           {[
-            { icon: '⏱️', t: 'Play 20 Hours', d: 'Earn 60 free credits (1 hour)' },
-            { icon: '🎂', t: 'Birthday Bonus', d: 'Free 1 hour on your birthday' },
-            { icon: '🏆', t: 'Tournament Win', d: 'Bonus XP and credits' },
+            { icon: '⏱️', t: 'Play 20 Hours', d: 'Earn 120 credits — equivalent to one Regular-table hour' },
+            { icon: '🎂', t: 'Birthday Bonus', d: 'Receive 120 credits — equivalent to one Regular-table hour' },
+            { icon: '🏆', t: 'Tournament Match Win', d: 'Earn 75 XP' },
+            { icon: '🎯', t: 'Tournament Match Loss', d: 'Earn 25 XP for each played match' },
+            { icon: '👑', t: 'Tournament Champion', d: 'Earn 150 XP + 120 credits' },
             { icon: '🔥', t: 'Win Streak Bonus', d: 'Consecutive wins unlock rewards' },
           ].map(item => (
             <View key={item.t} style={s.ruleCard}>
               <Text style={s.ruleIcon}>{item.icon}</Text>
-              <View><Text style={s.ruleTitle}>{item.t}</Text><Text style={s.ruleDesc}>{item.d}</Text></View>
+              <View style={s.ruleInfo}><Text style={s.ruleTitle}>{item.t}</Text><Text style={s.ruleDesc}>{item.d}</Text></View>
             </View>
           ))}
         </View>
@@ -217,12 +234,19 @@ export default function ProfileScreen() {
         </View>
       )}
 
+      <View style={s.achievementsCard}>
+        <Text style={s.achievementsTitle}>🏆 Tournament Titles</Text>
+        {data?.championTitles?.length ? data.championTitles.map((title: any) => (
+          <View key={title.id} style={s.achievementRow}><Text style={s.achievementName}>{title.tournamentName} Champion</Text><Text style={s.achievementMeta}>{title.format?.replace(/_/g, ' ')} · {new Date(title.earnedAt).toLocaleDateString('en-PH')}</Text></View>
+        )) : <Text style={s.achievementMeta}>Win a tournament to earn a permanent champion title.</Text>}
+      </View>
+
       <TouchableOpacity style={s.logoutBtn} onPress={() => setLogoutModal(true)}>
         <Ionicons name="log-out-outline" size={18} color={COLORS.error} />
         <Text style={s.logoutTxt}>Sign Out</Text>
       </TouchableOpacity>
 
-      <Modal visible={logoutModal} transparent animationType="fade">
+      <Modal visible={logoutModal} transparent animationType="fade" onRequestClose={() => setLogoutModal(false)}>
         <View style={s.overlay}>
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>Sign Out?</Text>
@@ -293,10 +317,11 @@ const s = StyleSheet.create({
   milestoneBar: { height: 10, backgroundColor: COLORS.surfaceLight, borderRadius: 5, overflow: 'hidden' },
   milestoneBarFill: { height: '100%', backgroundColor: COLORS.primary, borderRadius: 5 },
   milestoneHint: { fontSize: 13, color: COLORS.textMuted },
-  ruleCard: { flexDirection: 'row', gap: 12, backgroundColor: COLORS.surface, borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: COLORS.surfaceBorder },
+  ruleCard: { flexDirection: 'row', gap: 12, backgroundColor: COLORS.surface, borderRadius: 12, padding: 14, alignItems: 'flex-start', borderWidth: 1, borderColor: COLORS.surfaceBorder },
   ruleIcon: { fontSize: 24 },
+  ruleInfo: { flex: 1, minWidth: 0, flexShrink: 1 },
   ruleTitle: { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
-  ruleDesc: { fontSize: 12, color: COLORS.textSecondary },
+  ruleDesc: { flexShrink: 1, fontSize: 12, lineHeight: 18, color: COLORS.textSecondary },
   txRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: COLORS.surface, borderRadius: 12, padding: 14, borderWidth: 1, borderColor: COLORS.surfaceBorder },
   txIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
   txInfo: { flex: 1 },
@@ -307,6 +332,11 @@ const s = StyleSheet.create({
   emptyTxt: { color: COLORS.textMuted },
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 8, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: COLORS.error + '40' },
   logoutTxt: { color: COLORS.error, fontWeight: '700' },
+  achievementsCard: { backgroundColor: COLORS.surface, borderRadius: 16, padding: 16, gap: 9, borderWidth: 1, borderColor: COLORS.gold + '55' },
+  achievementsTitle: { fontSize: 15, fontWeight: '800', color: COLORS.gold },
+  achievementRow: { borderTopWidth: 1, borderTopColor: COLORS.surfaceBorder, paddingTop: 9, gap: 2 },
+  achievementName: { color: COLORS.textPrimary, fontWeight: '700' },
+  achievementMeta: { color: COLORS.textMuted, fontSize: 12 },
   overlay: { flex: 1, backgroundColor: '#000000AA', justifyContent: 'center', alignItems: 'center', padding: 32 },
   modalCard: { backgroundColor: COLORS.surface, borderRadius: 20, padding: 24, gap: 12, width: '100%' },
   modalTitle: { fontSize: 18, fontWeight: '800', color: COLORS.textPrimary },

@@ -39,6 +39,7 @@ model User {
   avatarUrl           String?
   pushToken           String?          // Expo push notification token
   isEmailVerified     Boolean          @default(false)
+  hasPendingCancellationFee Boolean    @default(false)
   emailVerifyToken    String?          // Random token sent via email
   emailVerifyExpires  DateTime?        // Token expiry (24h)
   createdAt           DateTime         @default(now())
@@ -56,6 +57,10 @@ model User {
   loyaltyHistory      LoyaltyHistory[]
   staffActions        StaffAction[]    @relation("StaffUser")
   refreshTokens       RefreshToken[]
+  manualPayments      ManualPayment[]
+  championTitles      ChampionTitle[]
+  tournamentPrizePayouts TournamentPayout[] @relation("TournamentPayoutRecipient")
+  tournamentPayoutApprovals TournamentPayout[] @relation("TournamentPayoutApprover")
 
   @@map("users")
 }
@@ -87,9 +92,11 @@ model Membership {
   user             User             @relation(fields: [userId], references: [id])
   plan             MembershipPlan   @default(BASIC)
   status           MembershipStatus @default(ACTIVE)
-  creditBalance    Float            @default(0)   // 1 PHP = 1 credit = 1 minute
+  creditBalance    Float            @default(0)   // 1 PHP = 1 credit of spending value
   totalHoursPlayed Float            @default(0)
   joinedAt         DateTime         @default(now())
+  // Legacy membership field retained for database compatibility. It is not
+  // used by credit balances or any credit-expiration logic.
   expiresAt        DateTime?
   updatedAt        DateTime         @updatedAt
 
@@ -114,6 +121,20 @@ model GamifiedProfile {
   updatedAt        DateTime @updatedAt
 
   @@map("gamified_profiles")
+}
+
+model ChampionTitle {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tournamentId String
+  tournamentName String
+  format       String
+  earnedAt     DateTime @default(now())
+
+  @@unique([userId, tournamentId])
+  @@index([userId, earnedAt])
+  @@map("champion_titles")
 }
 
 // ─────────────────────────────────────────────
@@ -158,6 +179,7 @@ model TableSession {
   isWalkin    Boolean       @default(false)
   startTime   DateTime      @default(now())
   endTime     DateTime?
+  expectedEndTime DateTime?
   creditsUsed Float         @default(0)
   extendCount Int           @default(0)
   status      String        @default("ACTIVE")  // ACTIVE, ENDED, EXTENDED
@@ -196,6 +218,7 @@ model Reservation {
   reviewedBy  String?       // Staff/Admin userId who approved or declined
   reviewedAt  DateTime?
   declineNote String?       // Reason if declined
+  reminderSentAt DateTime?
   createdAt   DateTime      @default(now())
 
   @@map("reservations")
@@ -220,6 +243,85 @@ enum PaymentMethod {
   MAYA
   CARD
   LOYALTY_CREDIT
+}
+
+// Manual QR payments are reviewed by staff. These enums deliberately do not
+// assume a particular gateway, so a provider integration can be added later.
+enum ManualPaymentPurpose {
+  CREDIT_TOPUP
+  TOURNAMENT_ENTRY
+  MEMBERSHIP
+  ORDER
+}
+
+enum OrderSource {
+  STAFF_POS
+  MEMBER_SHOP
+}
+
+enum OrderPaymentStatus {
+  PENDING
+  PAID
+  REJECTED
+  REFUNDED
+}
+
+enum OrderFulfillmentStatus {
+  PENDING
+  ACCEPTED
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+}
+
+enum ManualPaymentStatus {
+  PENDING
+  NEEDS_INFORMATION
+  APPROVED
+  REJECTED
+}
+
+model PaymentMethodConfig {
+  id            String        @id @default(uuid())
+  method        PaymentMethod @unique
+  businessName  String
+  accountName   String
+  accountNumber String?
+  qrCodeUrl     String?
+  instructions  String?
+  isEnabled     Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@map("payment_method_configs")
+}
+
+model ManualPayment {
+  id              String               @id @default(uuid())
+  userId          String
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose         ManualPaymentPurpose
+  tournamentEntryId String?
+  orderId         String?
+  order           Order?               @relation(fields: [orderId], references: [id])
+  method          PaymentMethod
+  amount          Float
+  referenceNo     String
+  receiptUrl      String?
+  notes           String?
+  status          ManualPaymentStatus  @default(PENDING)
+  reviewerId      String?
+  reviewedAt      DateTime?
+  reviewerRemarks String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@unique([method, referenceNo])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([orderId, status])
+  @@map("manual_payments")
 }
 
 model CreditTransaction {
@@ -281,6 +383,7 @@ model Product {
   name         String
   category     ProductCategory
   price        Float
+  costPrice    Float           @default(0)
   stock        Int             @default(0)
   lowStockAt   Int             @default(5)   // Alert when stock reaches this
   imageUrl     String?
@@ -300,7 +403,9 @@ model StockHistory {
   product   Product  @relation(fields: [productId], references: [id])
   change    Int      // positive = added, negative = removed
   reason    String   // SALE, RESTOCK, DAMAGE, ADJUSTMENT
-  staffId   String
+  staffId   String?
+  stockBefore Int?
+  stockAfter  Int?
   createdAt DateTime @default(now())
 
   @@map("stock_history")
@@ -313,9 +418,22 @@ model Order {
   walkinName      String?
   items           OrderItem[]
   total           Float
+  receiptNumber   String?       @unique
+  subtotal        Float         @default(0)
+  amountTendered  Float?
+  changeDue       Float?
   paymentMethod   PaymentMethod @default(CASH)
   paidWithCredits Boolean       @default(false)
-  staffId         String
+  status          String        @default("COMPLETED") // COMPLETED, VOIDED
+  source          OrderSource   @default(STAFF_POS)
+  paymentStatus   OrderPaymentStatus @default(PAID)
+  fulfillmentStatus OrderFulfillmentStatus @default(COMPLETED)
+  note            String?
+  voidReason      String?
+  voidedAt        DateTime?
+  voidedBy        String?
+  staffId         String?
+  manualPayments  ManualPayment[]
   createdAt       DateTime      @default(now())
 
   @@map("orders")
@@ -346,6 +464,7 @@ enum TournamentFormat {
 enum TournamentStatus {
   UPCOMING
   REGISTRATION_OPEN
+  REGISTRATION_CLOSED
   IN_PROGRESS
   COMPLETED
   CANCELLED
@@ -368,13 +487,17 @@ model Tournament {
   maxPlayers        Int              @default(16)
   entryFee          Float            @default(0)
   prizePool         Float            @default(0)
+  raceTo            Int              @default(5)
+  finalPrizePool    Float?
   startDate         DateTime         // date + time combined
+  registrationDeadline DateTime?
   estimatedDuration Int?             // auto-calculated in minutes
   endDate           DateTime?
   tableId           String?
   createdBy         String
   entries           TournamentEntry[]
   matches           TournamentMatch[]
+  payout            TournamentPayout?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
@@ -406,6 +529,10 @@ model TournamentEntry {
   cancelledBy     String?    // Admin userId who cancelled
   cancelledAt     DateTime?
   cancelNote      String?
+  cancellationFee Float      @default(0)
+  cancellationFeeStatus String @default("NOT_APPLICABLE") // NOT_APPLICABLE | PAID | PENDING
+  cancellationFeePaidAt DateTime?
+  cancelledByPlayer Boolean @default(false)
   registeredAt    DateTime   @default(now())
 
   @@unique([tournamentId, userId])
@@ -425,13 +552,64 @@ model TournamentMatch {
   winnerId        String?
   status          String     @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, BYE
   scheduledAt     DateTime?
+  startedAt       DateTime?
+  tableId         String?
   completedAt     DateTime?
   nextMatchId     String?
   nextMatch       TournamentMatch?  @relation("MatchProgression", fields: [nextMatchId], references: [id])
   previousMatches TournamentMatch[] @relation("MatchProgression")
   isLosers        Boolean    @default(false) // For double elimination
+  nextWinnerMatchId String?
+  nextLoserMatchId  String?
+  bracketStage       String     @default("WINNERS")
+  isGrandFinal      Boolean    @default(false)
+  isResetFinal      Boolean    @default(false)
+
+  @@unique([tableId, scheduledAt])
 
   @@map("tournament_matches")
+}
+
+model TournamentFeeLiability {
+  id                String   @id @default(uuid())
+  userId            String
+  tournamentId      String
+  tournamentEntryId String?
+  tournamentMatchId String?
+  feeType           String
+  amount            Float
+  status            String   @default("PENDING")
+  createdAt         DateTime @default(now())
+  paidAt            DateTime?
+  creditTransactionId String?
+
+  @@unique([tournamentMatchId, feeType])
+  @@index([userId, status, createdAt])
+  @@index([tournamentId])
+  @@map("tournament_fee_liabilities")
+}
+
+// A completed tournament has at most one manually confirmed, cash-only
+// winner-takes-all prize payout. This is intentionally separate from wallet
+// and revenue transactions.
+model TournamentPayout {
+  id           String     @id @default(uuid())
+  tournamentId String     @unique
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  recipientId  String
+  recipient    User       @relation("TournamentPayoutRecipient", fields: [recipientId], references: [id])
+  amount       Float
+  method       String     @default("CASH")
+  status       String     @default("PENDING")
+  paidAt       DateTime?
+  paidById     String?
+  paidBy       User?      @relation("TournamentPayoutApprover", fields: [paidById], references: [id])
+  note         String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([recipientId])
+  @@map("tournament_payouts")
 }
 
 // ─────────────────────────────────────────────
@@ -449,6 +627,8 @@ enum PocketPosition {
 
 model SensorReading {
   id          String        @id @default(uuid())
+  eventId     String?       @unique // Idempotency key supplied by camera clients
+  source      String        @default("PHYSICAL_SENSOR")
   tableId     String
   table       BilliardTable @relation(fields: [tableId], references: [id])
   sessionId   String?
@@ -499,7 +679,14 @@ enum NotificationType {
   EVENT_ANNOUNCEMENT
   RESERVATION_APPROVED     // NEW: staff approved table reservation
   RESERVATION_DECLINED     // NEW: staff declined table reservation
+  RESERVATION_SUBMITTED
+  RESERVATION_CANCELLED
+  RESERVATION_REMINDER
   TOPUP_SUCCESS            // NEW: credit top-up successful
+  TOPUP_SUBMITTED
+  TOPUP_APPROVED
+  TOPUP_REJECTED
+  PAYMENT_INFO_REQUIRED
   PAYMENT_RECEIVED         // NEW: payment recorded
   SYSTEM
 }
@@ -512,6 +699,8 @@ model Notification {
   title   String
   message String
   data    Json?            // Extra payload (match id, tournament id, etc.)
+  senderId String?
+  actionRoute String?
   isRead  Boolean          @default(false)
   sentAt  DateTime         @default(now())
 

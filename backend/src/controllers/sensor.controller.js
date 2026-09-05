@@ -1,35 +1,48 @@
 const prisma = require('../config/prisma');
+const { updatePlayerRank } = require('../utils/gamification');
+const { normalizePocketEvent, findDuplicateEvent } = require('../utils/sensorEvents');
 
 // Raspberry Pi posts to this endpoint when a pocket sensor is triggered
 const pocketDetected = async (req, res) => {
-  const { tableId, pocket, ballColor, rawSignal, confidence, sessionId } = req.body;
-
-  if (!tableId || !pocket) {
-    return res.status(400).json({ error: 'tableId and pocket are required' });
+  const normalized = normalizePocketEvent(req.body);
+  if (normalized.error) {
+    return res.status(normalized.requiresConfirmation ? 422 : 400).json(normalized);
   }
-
-  const validPockets = ['TOP_LEFT', 'TOP_RIGHT', 'MIDDLE_LEFT', 'MIDDLE_RIGHT', 'BOTTOM_LEFT', 'BOTTOM_RIGHT'];
-  if (!validPockets.includes(pocket)) {
-    return res.status(400).json({ error: `Invalid pocket. Must be one of: ${validPockets.join(', ')}` });
-  }
+  const { tableId, pocket, ballColor, rawSignal, confidence, sessionId, eventId, source } = normalized.event;
 
   try {
+    // Camera retries are common on weak venue Wi-Fi.  Prevent one physical pot
+    // from being appended twice when the client retries the same event ID.
+    let gameScore = null;
+    if (sessionId) {
+      if (eventId) {
+        const existingReading = await prisma.sensorReading.findUnique({ where: { eventId } });
+        if (existingReading) {
+          gameScore = await prisma.gameScore.findUnique({ where: { sessionId } });
+          return res.json({ success: true, duplicate: true, reading: existingReading, gameScore });
+        }
+      }
+      gameScore = await prisma.gameScore.findUnique({ where: { sessionId } });
+      const duplicate = findDuplicateEvent(gameScore?.ballsPotted, eventId);
+      if (duplicate) return res.json({ success: true, duplicate: true, gameScore, event: duplicate });
+    }
+
     // Record sensor reading
     const reading = await prisma.sensorReading.create({
       data: {
+        eventId,
+        source,
         tableId,
         sessionId: sessionId || null,
         pocket,
         ballColor: ballColor || null,
-        rawSignal: rawSignal || null,
-        confidence: confidence || null,
+        rawSignal,
+        confidence,
       },
     });
 
     // Update game score if there's an active game session
-    let gameScore = null;
     if (sessionId) {
-      gameScore = await prisma.gameScore.findUnique({ where: { sessionId } });
       if (gameScore && gameScore.status === 'IN_PROGRESS') {
         // Update ballsPotted array
         const ballsPotted = Array.isArray(gameScore.ballsPotted) ? gameScore.ballsPotted : [];
@@ -38,6 +51,8 @@ const pocketDetected = async (req, res) => {
           ballColor: ballColor || 'unknown',
           timestamp: new Date().toISOString(),
           readingId: reading.id,
+          eventId,
+          source,
         });
 
         gameScore = await prisma.gameScore.update({
@@ -54,6 +69,8 @@ const pocketDetected = async (req, res) => {
       pocket,
       ballColor,
       confidence,
+      eventId,
+      source,
       timestamp: reading.triggeredAt,
       gameScore,
     };
@@ -64,6 +81,13 @@ const pocketDetected = async (req, res) => {
 
     res.json({ success: true, reading, gameScore });
   } catch (err) {
+    // A concurrent retry can pass the read check but will still be rejected by
+    // the database's unique eventId constraint.
+    if (err.code === 'P2002' && eventId) {
+      const reading = await prisma.sensorReading.findUnique({ where: { eventId } });
+      const gameScore = sessionId ? await prisma.gameScore.findUnique({ where: { sessionId } }) : null;
+      return res.json({ success: true, duplicate: true, reading, gameScore });
+    }
     console.error('[Sensor Error]', err);
     res.status(500).json({ error: 'Failed to record sensor reading' });
   }
@@ -151,12 +175,11 @@ const endGame = async (req, res) => {
           data: {
             totalWins: { increment: 1 },
             totalGames: { increment: 1 },
-            xp: { increment: 50 },
             winStreak: { increment: 1 },
           },
         });
         // Update rank based on wins
-        await updatePlayerRank(winnerId);
+        await updatePlayerRank(prisma, winnerId);
       }
     }
 
@@ -191,20 +214,6 @@ const getLiveData = async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to get sensor data' });
   }
-};
-
-// Helper: Update player rank based on stats
-const updatePlayerRank = async (userId) => {
-  const profile = await prisma.gamifiedProfile.findUnique({ where: { userId } });
-  if (!profile) return;
-
-  let rank = 'Rookie';
-  if (profile.totalWins >= 100) rank = 'Elite';
-  else if (profile.totalWins >= 50) rank = 'Legend';
-  else if (profile.totalWins >= 20) rank = 'Shark';
-  else if (profile.totalWins >= 5) rank = 'Hustler';
-
-  await prisma.gamifiedProfile.update({ where: { userId }, data: { rank } });
 };
 
 module.exports = { pocketDetected, startGame, updateScore, endGame, getLiveData };

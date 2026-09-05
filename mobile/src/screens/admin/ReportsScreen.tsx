@@ -45,10 +45,11 @@ export default function ReportsScreen() {
       <View style={s.todayCard}>
         <Text style={s.todayTitle}>Today — {new Date().toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
         <View style={s.todayGrid}>
-          <TodayStat icon="cash-outline" label="Total Revenue" value={`₱${(daily?.totalRevenue || 0).toFixed(0)}`} color={COLORS.success} />
-          <TodayStat icon="grid-outline" label="Table Revenue" value={`₱${(daily?.tableRevenue || 0).toFixed(0)}`} color={COLORS.primary} />
-          <TodayStat icon="cart-outline" label="POS Revenue" value={`₱${(daily?.posRevenue || 0).toFixed(0)}`} color={COLORS.info} />
-          <TodayStat icon="wallet-outline" label="Credits Sold" value={`₱${(daily?.creditsToppedup || 0).toFixed(0)}`} color={COLORS.gold} />
+          <TodayStat icon="cash-outline" label="Cash Revenue" value={`₱${(daily?.cashRevenue || 0).toFixed(0)}`} color={COLORS.success} />
+          <TodayStat icon="grid-outline" label="Table Usage Value" value={`₱${(daily?.tableUsageValue || 0).toFixed(0)}`} color={COLORS.primary} />
+          <TodayStat icon="cart-outline" label="POS Sales Value" value={`₱${(daily?.posSalesValue || 0).toFixed(0)}`} color={COLORS.info} />
+          <TodayStat icon="wallet-outline" label="Credit Top-ups" value={`₱${(daily?.creditTopups || 0).toFixed(0)}`} color={COLORS.gold} />
+          <TodayStat icon="trophy-outline" label="Tournament Cash" value={`₱${(daily?.tournamentCashCollections || 0).toFixed(0)}`} color={COLORS.rankElite} />
           <TodayStat icon="play-outline" label="Sessions" value={daily?.sessionsCount || 0} color={COLORS.rankShark} />
           <TodayStat icon="receipt-outline" label="POS Orders" value={daily?.ordersCount || 0} color={COLORS.rankElite} />
           <TodayStat icon="people-outline" label="New Members" value={daily?.newMembersCount || 0} color={COLORS.success} />
@@ -81,8 +82,10 @@ export default function ReportsScreen() {
 
       {/* Revenue Chart */}
       <View style={s.card}>
-        <Text style={s.cardTitle}>Revenue — Last {period} Days</Text>
-        <Text style={s.cardSub}>Total: ₱{(sales?.totalRevenue || 0).toFixed(0)} · {sales?.totalOrders || 0} orders</Text>
+        <Text style={s.cardTitle}>Cash Revenue — Last {period} Days</Text>
+        <Text style={s.cardSub}>
+          Cash Revenue: ₱{(sales?.cashRevenueTotal || 0).toFixed(0)} · POS Sales: ₱{(sales?.posSalesValueTotal || 0).toFixed(0)} · Credit Top-ups: ₱{(sales?.creditTopupsTotal || 0).toFixed(0)}
+        </Text>
         <View style={s.barChart}>
           {(sales?.dailySales || []).map((day: any, i: number) => {
             const pct = day.revenue / maxRev;
@@ -110,7 +113,8 @@ export default function ReportsScreen() {
           (sales?.categoryBreakdown || [])
             .sort((a: any, b: any) => b.revenue - a.revenue)
             .map((cat: any) => {
-              const pct = sales.totalRevenue > 0 ? cat.revenue / (sales?.categoryBreakdown?.reduce((s: number, c: any) => s + c.revenue, 0) || 1) : 0;
+              const denom = sales?.posSalesValueTotal || (sales?.categoryBreakdown?.reduce((s: number, c: any) => s + c.revenue, 0) || 0);
+              const pct = denom > 0 ? cat.revenue / denom : 0;
               return (
                 <View key={cat.category} style={s.catRow}>
                   <Text style={s.catName}>{cat.category.replace(/_/g, ' ')}</Text>
@@ -132,7 +136,7 @@ export default function ReportsScreen() {
         <Text style={s.cardTitle}>Daily Breakdown</Text>
         <View style={s.tableHead}>
           <Text style={[s.tableCell, s.tableHeadTxt]}>Date</Text>
-          <Text style={[s.tableCell, s.tableHeadTxt, { textAlign: 'right' }]}>Revenue</Text>
+          <Text style={[s.tableCell, s.tableHeadTxt, { textAlign: 'right' }]}>Cash Revenue</Text>
           <Text style={[s.tableCell, s.tableHeadTxt, { textAlign: 'right' }]}>Orders</Text>
         </View>
         {(sales?.dailySales || []).slice().reverse().map((day: any) => {
@@ -144,7 +148,7 @@ export default function ReportsScreen() {
                 {isToday ? ' (Today)' : ''}
               </Text>
               <Text style={[s.tableCell, { textAlign: 'right', color: day.revenue > 0 ? COLORS.success : COLORS.textMuted, fontWeight: '700' }]}>
-                ₱{day.revenue.toFixed(0)}
+                ₱{day.cashRevenue.toFixed(0)}
               </Text>
               <Text style={[s.tableCell, { textAlign: 'right', color: COLORS.textSecondary }]}>{day.orders}</Text>
             </View>

@@ -9,3 +9,10 @@ __pycache__/
 *.pyc
 .pycache/
 prisma/dev.db
+backend/uploads/
+vision/.venv/
+vision/models/
+vision/test-videos/
+*.pt
+*.pth
+*.onnx
