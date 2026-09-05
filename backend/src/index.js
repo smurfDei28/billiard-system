@@ -15,6 +15,9 @@ const prisma = require('./config/prisma');
 const { enabledModules, requireFeature } = require('./config/features');
 
 const app = express();
+// Railway terminates HTTPS at its reverse proxy. Trust exactly that first hop so
+// Express and express-rate-limit use the real client IP from X-Forwarded-For.
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // ─── Socket.IO for real-time (TV display, live brackets, queue) ───
