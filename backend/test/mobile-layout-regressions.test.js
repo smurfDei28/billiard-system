@@ -33,3 +33,17 @@ test('long member histories are collapsed behind explicit controls', () => {
   assert.match(payments, /pendingShopPayments\.slice\(0, 3\)/);
   assert.match(payments, /showAllPendingShopPayments[\s\S]*"See Less"[\s\S]*`See More/);
 });
+
+test('TV presentation uses explicit Philippine time and landscape orientation', () => {
+  const tv = readMobile('src', 'screens', 'tv', 'TVDisplayScreen.tsx');
+  const rootNavigator = readMobile('src', 'navigation', 'RootNavigator.tsx');
+  const appConfig = JSON.parse(readMobile('app.json'));
+
+  assert.match(tv, /PH_TIME_ZONE = 'Asia\/Manila'/);
+  assert.match(tv, /PH TIME · UTC\+8/);
+  assert.match(tv, /OrientationLock\.LANDSCAPE/);
+  assert.match(tv, /useKeepAwake\(\)/);
+  assert.match(tv, /isConnected \? '● LIVE' : '● RECONNECTING'/);
+  assert.match(rootNavigator, /OrientationLock\.PORTRAIT_UP/);
+  assert.equal(appConfig.expo.orientation, 'default');
+});

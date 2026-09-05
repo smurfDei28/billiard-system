@@ -46,6 +46,7 @@ class Track:
     track_id: int
     center: Tuple[float, float]
     label_votes: Dict[str, float] = field(default_factory=dict)
+    label_observations: Dict[str, int] = field(default_factory=dict)
     confidence_total: float = 0.0
     observations: int = 0
     missing_frames: int = 0
@@ -54,6 +55,7 @@ class Track:
     def observe(self, detection: Detection) -> None:
         self.center = detection.center
         self.label_votes[detection.label] = self.label_votes.get(detection.label, 0.0) + detection.confidence
+        self.label_observations[detection.label] = self.label_observations.get(detection.label, 0) + 1
         self.confidence_total += detection.confidence
         self.observations += 1
         self.missing_frames = 0
@@ -65,6 +67,15 @@ class Track:
     @property
     def confidence(self) -> float:
         return self.confidence_total / max(1, self.observations)
+
+    @property
+    def label_confidence(self) -> float:
+        label = self.label
+        return self.label_votes[label] / max(1, self.label_observations[label])
+
+    @property
+    def label_vote_share(self) -> float:
+        return self.label_votes[self.label] / max(0.000001, sum(self.label_votes.values()))
 
 
 DEFAULT_POCKETS: Mapping[str, Tuple[float, float]] = {
@@ -94,7 +105,9 @@ class PocketOccupancyScorer:
 
     def __init__(self, pockets=DEFAULT_POCKETS, *, min_confidence=0.45,
                  auto_confidence=0.72, pocket_radius=0.07,
-                 arm_empty_frames=5, occupied_frames=3, cooldown_frames=300):
+                 arm_empty_frames=5, occupied_frames=3, cooldown_frames=300,
+                 track_match_radius=0.09, track_stale_frames=15,
+                 minimum_label_vote_share=0.70):
         self.pockets = dict(pockets)
         self.min_confidence = min_confidence
         self.auto_confidence = auto_confidence
@@ -102,23 +115,32 @@ class PocketOccupancyScorer:
         self.arm_empty_frames = arm_empty_frames
         self.required_occupied_frames = occupied_frames
         self.cooldown_frames = cooldown_frames
+        self.track_match_radius = track_match_radius
+        self.track_stale_frames = track_stale_frames
+        self.minimum_label_vote_share = minimum_label_vote_share
         self.frame_number = 0
         self.states = {name: PocketState() for name in self.pockets}
+        self.tracks: Dict[int, Track] = {}
+        self.next_track_id = 1
 
     def process(self, detections: Iterable[Detection]) -> List[dict]:
         self.frame_number += 1
-        inside: Dict[str, List[Detection]] = {name: [] for name in self.pockets}
+        usable: List[Detection] = []
         for detection in detections:
             label = normalize_label(detection.label)
             if not label or detection.confidence < self.min_confidence:
                 continue
-            detection = Detection(label, float(detection.confidence), detection.box)
+            usable.append(Detection(label, float(detection.confidence), detection.box))
+
+        detection_tracks = self._update_tracks(usable)
+        inside: Dict[str, List[Tuple[Detection, int]]] = {name: [] for name in self.pockets}
+        for detection_index, detection in enumerate(usable):
             pocket = min(self.pockets, key=lambda name: hypot(
                 detection.center[0] - self.pockets[name][0],
                 detection.center[1] - self.pockets[name][1]))
             if hypot(detection.center[0] - self.pockets[pocket][0],
                      detection.center[1] - self.pockets[pocket][1]) <= self.pocket_radius:
-                inside[pocket].append(detection)
+                inside[pocket].append((detection, detection_tracks[detection_index]))
 
         events: List[dict] = []
         for pocket, state in self.states.items():
@@ -135,23 +157,71 @@ class PocketOccupancyScorer:
 
             state.empty_frames = 0
             state.occupied_frames += 1
-            for detection in occupants:
+            for detection, _ in occupants:
                 state.label_votes[detection.label] = state.label_votes.get(detection.label, 0.0) + detection.confidence
                 state.label_observations[detection.label] = state.label_observations.get(detection.label, 0) + 1
             if not state.armed or state.occupied_frames < self.required_occupied_frames:
                 continue
 
-            label = max(state.label_votes, key=state.label_votes.get)
-            confidence = state.label_votes[label] / state.label_observations[label]
+            # Prefer the physical track's full approach history. Fast-moving
+            # stripes can look solid only after blur/occlusion at the pocket.
+            occupant_track_ids = {track_id for _, track_id in occupants}
+            track = max(
+                (self.tracks[track_id] for track_id in occupant_track_ids),
+                key=lambda candidate: candidate.observations,
+            )
+            if track.observations >= self.required_occupied_frames:
+                label = track.label
+                confidence = track.label_confidence
+                ambiguous_label = track.label_vote_share < self.minimum_label_vote_share
+            else:
+                label = max(state.label_votes, key=state.label_votes.get)
+                confidence = state.label_votes[label] / state.label_observations[label]
+                ambiguous_label = False
             event_id = sha256(f"{pocket}:{self.frame_number}:{label}".encode()).hexdigest()[:24]
             events.append({"eventId": event_id, "pocket": pocket,
                            "ballColor": label, "confidence": round(confidence, 4),
                            "source": "CAMERA_VISION",
-                           "requiresConfirmation": label in {"cue", "eight"} or confidence < self.auto_confidence,
+                           "requiresConfirmation": label in {"cue", "eight"} or confidence < self.auto_confidence or ambiguous_label,
                            "frameNumber": self.frame_number})
             state.armed = False
             state.last_event_frame = self.frame_number
         return events
+
+    def _update_tracks(self, detections: Sequence[Detection]) -> Dict[int, int]:
+        unmatched_tracks = set(self.tracks)
+        unmatched_detections = set(range(len(detections)))
+        pairs: List[Tuple[float, int, int]] = []
+        for track_id, track in self.tracks.items():
+            for detection_index, detection in enumerate(detections):
+                distance = hypot(track.center[0] - detection.center[0], track.center[1] - detection.center[1])
+                if distance <= self.track_match_radius:
+                    pairs.append((distance, track_id, detection_index))
+
+        matched: Dict[int, int] = {}
+        for _, track_id, detection_index in sorted(pairs):
+            if track_id not in unmatched_tracks or detection_index not in unmatched_detections:
+                continue
+            self.tracks[track_id].observe(detections[detection_index])
+            matched[detection_index] = track_id
+            unmatched_tracks.remove(track_id)
+            unmatched_detections.remove(detection_index)
+
+        for track_id in unmatched_tracks:
+            self.tracks[track_id].missing_frames += 1
+        for detection_index in unmatched_detections:
+            detection = detections[detection_index]
+            track = Track(self.next_track_id, detection.center)
+            track.observe(detection)
+            self.tracks[track.track_id] = track
+            matched[detection_index] = track.track_id
+            self.next_track_id += 1
+
+        self.tracks = {
+            track_id: track for track_id, track in self.tracks.items()
+            if track.missing_frames <= self.track_stale_frames
+        }
+        return matched
 
 
 class TemporalPocketScorer:

@@ -77,6 +77,45 @@ class PocketOccupancyScorerTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertTrue(events[0]["requiresConfirmation"])
 
+    def test_approach_history_outvotes_blurred_pocket_class_flicker(self):
+        scorer = PocketOccupancyScorer(
+            pockets={"MIDDLE_LEFT": (0.5, 0.08)},
+            arm_empty_frames=2,
+            occupied_frames=3,
+            cooldown_frames=20,
+        )
+        scorer.process([])
+        scorer.process([])
+        for y in (0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.18, 0.16):
+            scorer.process([ball("stripe", 0.95, center=(0.5, y))])
+        scorer.process([])
+        scorer.process([])
+        events = []
+        for _ in range(3):
+            events += scorer.process([ball("solid", 0.88, center=(0.5, 0.10))])
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["ballColor"], "stripe")
+        self.assertFalse(events[0]["requiresConfirmation"])
+
+    def test_ambiguous_solid_stripe_track_requires_confirmation(self):
+        scorer = PocketOccupancyScorer(
+            pockets={"MIDDLE_LEFT": (0.5, 0.08)},
+            arm_empty_frames=2,
+            occupied_frames=3,
+            cooldown_frames=20,
+        )
+        scorer.process([])
+        scorer.process([])
+        for label in ("stripe", "solid", "stripe", "solid"):
+            scorer.process([ball(label, 0.90, center=(0.5, 0.16))])
+        events = []
+        for label in ("stripe", "solid", "stripe"):
+            events += scorer.process([ball(label, 0.90, center=(0.5, 0.10))])
+
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0]["requiresConfirmation"])
+
 
 if __name__ == "__main__":
     unittest.main()

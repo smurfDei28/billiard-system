@@ -1,16 +1,39 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  Animated, Dimensions,
+  Animated,
 } from 'react-native';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import { useKeepAwake } from 'expo-keep-awake';
 import { useSocket } from '../../context/SocketContext';
 import { api } from '../../context/AuthContext';
 import { COLORS, RANK_CONFIG } from '../../constants';
 
-const { width, height } = Dimensions.get('window');
+const PH_TIME_ZONE = 'Asia/Manila';
+const formatPhilippineTime = (value: Date | string | number) =>
+  new Date(value).toLocaleTimeString('en-PH', {
+    timeZone: PH_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+const formatPhilippineDate = (value: Date | string | number) =>
+  new Date(value).toLocaleDateString('en-PH', {
+    timeZone: PH_TIME_ZONE,
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+const formatPhilippineDateTime = (value: Date | string | number) =>
+  new Date(value).toLocaleString('en-PH', {
+    timeZone: PH_TIME_ZONE,
+    dateStyle: 'short',
+    timeStyle: 'short',
+  });
 
 export default function TVDisplayScreen() {
-  const { socket, joinTV } = useSocket();
+  useKeepAwake();
+  const { socket, isConnected, joinTV } = useSocket();
   const [tables, setTables] = useState<any[]>([]);
   const [queue, setQueue] = useState<any[]>([]);
   const [activeTournament, setActiveTournament] = useState<any>(null);
@@ -18,6 +41,15 @@ export default function TVDisplayScreen() {
   const [announcement, setAnnouncement] = useState<any>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const callAnim = new Animated.Value(0);
+
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch((error) => {
+      console.warn('[TV] Could not lock landscape orientation', error);
+    });
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     joinTV();
@@ -89,8 +121,8 @@ export default function TVDisplayScreen() {
 
   const available = tables.filter((t) => t.status === 'AVAILABLE');
   const occupied = tables.filter((t) => t.status === 'OCCUPIED');
-  const timeStr = currentTime.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
-  const dateStr = currentTime.toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = formatPhilippineTime(currentTime);
+  const dateStr = formatPhilippineDate(currentTime);
 
   return (
     <View style={styles.container}>
@@ -103,7 +135,15 @@ export default function TVDisplayScreen() {
             <Text style={styles.headerDate}>{dateStr}</Text>
           </View>
         </View>
-        <Text style={styles.headerTime}>{timeStr}</Text>
+        <View style={styles.headerClock}>
+          <Text style={styles.headerTime}>{timeStr}</Text>
+          <View style={styles.headerMeta}>
+            <Text style={styles.headerZone}>PH TIME · UTC+8</Text>
+            <Text style={[styles.connectionStatus, isConnected ? styles.connectionLive : styles.connectionOffline]}>
+              {isConnected ? '● LIVE' : '● RECONNECTING'}
+            </Text>
+          </View>
+        </View>
       </View>
 
       <View style={styles.body}>
@@ -134,13 +174,13 @@ export default function TVDisplayScreen() {
                 {table.sessions?.[0] && (
                   <Text style={styles.tableCellTime}>
                     {table.sessions[0].isWalkin && table.sessions[0].expectedEndTime
-                      ? `Until ${new Date(table.sessions[0].expectedEndTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}`
+                      ? `Until ${formatPhilippineTime(table.sessions[0].expectedEndTime)}`
                       : `${Math.floor((Date.now() - new Date(table.sessions[0].startTime).getTime()) / 60000)}m`}
                   </Text>
                 )}
                 {tableQueue.length > 0 && <Text style={styles.tableCellQueue}>{tableQueue.length} scheduled</Text>}
-                {nextEntry && <Text style={styles.tableCellNext} numberOfLines={1}>NEXT: {nextEntry.user?.firstName || 'Member'} · {new Date(nextEntry.startTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}</Text>}
-                {reservation && <Text style={styles.tableCellReservation}>Reserved {new Date(reservation.startTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}</Text>}
+                {nextEntry && <Text style={styles.tableCellNext} numberOfLines={1}>NEXT: {nextEntry.user?.firstName || 'Member'} · {formatPhilippineTime(nextEntry.startTime)}</Text>}
+                {reservation && <Text style={styles.tableCellReservation}>Reserved {formatPhilippineTime(reservation.startTime)}</Text>}
               </View>
             })}
           </View>
@@ -183,7 +223,7 @@ export default function TVDisplayScreen() {
                         ? `${entry.user.firstName} ${entry.user.lastName}`
                         : entry.walkinName || 'Walk-in'}
                     </Text>
-                    <Text style={styles.queueTable}>Table {entry.table?.tableNumber} · {new Date(entry.startTime).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}</Text>
+                    <Text style={styles.queueTable}>Table {entry.table?.tableNumber} · {formatPhilippineTime(entry.startTime)}</Text>
                   </View>
                   <View style={[styles.queueStatus, { backgroundColor: entry.status === 'APPROVED' ? COLORS.success + '30' : COLORS.surfaceLight }]}>
                     <Text style={[styles.queueStatusText, { color: entry.status === 'APPROVED' ? COLORS.success : COLORS.textMuted }]}>
@@ -321,7 +361,7 @@ function TVMatch({ match, tournament, live = false }: any) {
   return <View style={[styles.matchCard, live && styles.tvMatchLive]}>
     <Text style={styles.matchRound}>{match.isResetFinal ? 'Reset Final' : match.isGrandFinal ? 'Grand Final' : `Round ${match.round} · Match ${match.matchNumber}`}{match.table?.tableNumber ? ` · Table ${match.table.tableNumber}` : ''}</Text>
     <Text style={styles.tvMatchNames}>{p1} <Text style={styles.matchVSText}>vs</Text> {p2}</Text>
-    {match.status === 'BYE' ? <Text style={styles.tvMatchDetail}>BYE — Auto advance</Text> : <Text style={styles.tvMatchDetail}>{live ? 'LIVE' : match.status === 'COMPLETED' ? `${match.player1Score} – ${match.player2Score}` : match.scheduledAt ? new Date(match.scheduledAt).toLocaleString('en-PH', { dateStyle: 'short', timeStyle: 'short' }) : 'Upcoming'}</Text>}
+    {match.status === 'BYE' ? <Text style={styles.tvMatchDetail}>BYE — Auto advance</Text> : <Text style={styles.tvMatchDetail}>{live ? 'LIVE' : match.status === 'COMPLETED' ? `${match.player1Score} – ${match.player2Score}` : match.scheduledAt ? formatPhilippineDateTime(match.scheduledAt) : 'Upcoming'}</Text>}
   </View>;
 }
 
@@ -336,7 +376,13 @@ const styles = StyleSheet.create({
   headerLogo: { fontSize: 36 },
   headerTitle: { fontSize: 22, fontWeight: '900', color: COLORS.textPrimary, letterSpacing: 2 },
   headerDate: { fontSize: 13, color: COLORS.textSecondary },
+  headerClock: { alignItems: 'flex-end' },
   headerTime: { fontSize: 42, fontWeight: '900', color: COLORS.primary, fontVariant: ['tabular-nums'] },
+  headerMeta: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerZone: { color: COLORS.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
+  connectionStatus: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  connectionLive: { color: COLORS.success },
+  connectionOffline: { color: COLORS.warning },
   body: { flex: 1, flexDirection: 'row', padding: 20, gap: 20 },
   leftPanel: { flex: 1.2 },
   rightPanel: { flex: 1 },

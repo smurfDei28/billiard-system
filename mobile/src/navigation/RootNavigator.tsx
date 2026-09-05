@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
@@ -30,6 +31,10 @@ const linking = {
 export default function RootNavigator() {
   const { user, isLoading } = useAuth();
   const [splashDone, setSplashDone] = useState(false);
+
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+  }, []);
 
   // Stage 1: Splash Screen — shows on every app open
   if (!splashDone || isLoading) {
