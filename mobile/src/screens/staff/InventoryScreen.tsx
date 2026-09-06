@@ -1,13 +1,15 @@
 // InventoryScreen.tsx
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput, RefreshControl, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { api } from '../../context/AuthContext';
-import { COLORS } from '../../constants';
+import * as ImagePicker from 'expo-image-picker';
+import { api, getAccessToken } from '../../context/AuthContext';
+import { API_URL, COLORS } from '../../constants';
 
 const CATEGORIES = ['RICE_MEAL','DRINKS','ALCOHOLIC_BEVERAGES','COFFEE','BILLIARD_EQUIPMENT','SNACKS'];
 const CAT_LABELS: Record<string,string> = { RICE_MEAL:'Rice Meal', DRINKS:'Drinks', ALCOHOLIC_BEVERAGES:'Alcohol', COFFEE:'Coffee', BILLIARD_EQUIPMENT:'Equipment', SNACKS:'Snacks' };
 const CAT_ICONS: Record<string,string> = { RICE_MEAL:'🍚', DRINKS:'🥤', ALCOHOLIC_BEVERAGES:'🍺', COFFEE:'☕', BILLIARD_EQUIPMENT:'🎱', SNACKS:'🍟' };
+const storedImageSource = (url?: string) => url ? { uri: /^https?:\/\//i.test(url) ? url : `${API_URL}${url}` } : null;
 
 export default function InventoryScreen() {
   const [data, setData] = useState<any>({ products: [], lowStock: [] });
@@ -20,6 +22,8 @@ export default function InventoryScreen() {
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [editForm, setEditForm] = useState({ name:'', category:'DRINKS', price:'', costPrice:'', lowStockAt:'5' });
   const [statusProduct, setStatusProduct] = useState<any>(null);
+  const [newImage, setNewImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [editImage, setEditImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [saving, setSaving] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -28,6 +32,35 @@ export default function InventoryScreen() {
   }, []);
 
   useEffect(() => { fetchData(); }, []);
+
+  const chooseProductImage = async (target: 'new' | 'edit', camera = false) => {
+    const permission = camera
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return Alert.alert('Permission needed', `Allow ${camera ? 'camera' : 'photo library'} access to choose a product photo.`);
+    const result = camera
+      ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8, allowsEditing: true, aspect: [4, 3] })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8, allowsEditing: true, aspect: [4, 3] });
+    if (!result.canceled && result.assets?.[0]) (target === 'new' ? setNewImage : setEditImage)(result.assets[0]);
+  };
+
+  const uploadProductImage = async (productId: string, image: ImagePicker.ImagePickerAsset) => {
+    const token = await getAccessToken();
+    const form = new FormData();
+    form.append('image', {
+      uri: image.uri,
+      name: image.fileName || `product-${Date.now()}.jpg`,
+      type: image.mimeType || 'image/jpeg',
+    } as any);
+    const response = await fetch(`${API_URL}/api/products/${encodeURIComponent(productId)}/image`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: form,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Could not upload the product image.');
+    return payload;
+  };
 
   const updateStock = async () => {
     if (!amount || isNaN(Number(amount))) return Alert.alert('Error', 'Enter a valid number');
@@ -42,9 +75,17 @@ export default function InventoryScreen() {
 
   const createProduct = async () => {
     if (!newForm.name || !newForm.price) return Alert.alert('Error', 'Name and price required');
+    if (!newImage) return Alert.alert('Product photo required', 'Choose a photo that shows this exact product before adding it.');
     setSaving(true);
     try {
-      await api.post('/api/products', { ...newForm, price: parseFloat(newForm.price), costPrice: parseFloat(newForm.costPrice || '0'), stock: parseInt(newForm.stock||'0'), lowStockAt: parseInt(newForm.lowStockAt||'5') });
+      const created = await api.post('/api/products', { ...newForm, price: parseFloat(newForm.price), costPrice: parseFloat(newForm.costPrice || '0'), stock: parseInt(newForm.stock||'0'), lowStockAt: parseInt(newForm.lowStockAt||'5') });
+      try {
+        await uploadProductImage(created.data.id, newImage);
+      } catch (imageError: any) {
+        setModal(null); setNewImage(null); fetchData();
+        return Alert.alert('Product created without photo', `${imageError.message}\n\nOpen this product with Edit / Photo to retry the upload. The product was not duplicated.`);
+      }
+      setNewImage(null); setNewForm({ name:'', category:'DRINKS', price:'', costPrice:'', stock:'', lowStockAt:'5' });
       fetchData(); setModal(null);
     } catch (err: any) { Alert.alert('Error', err.response?.data?.error || 'Failed'); }
     finally { setSaving(false); }
@@ -52,16 +93,20 @@ export default function InventoryScreen() {
 
   const openEditProduct = (product: any) => {
     setEditingProduct(product);
+    setEditImage(null);
     setEditForm({ name: product.name, category: product.category, price: String(product.price), costPrice: String(product.costPrice || 0), lowStockAt: String(product.lowStockAt) });
   };
 
   const saveProduct = async () => {
     if (!editingProduct || !editForm.name.trim() || !editForm.price) return Alert.alert('Error', 'Name and selling price are required.');
+    if (!editingProduct.imageUrl && !editImage) return Alert.alert('Product photo required', 'Choose a photo that shows this exact product.');
     setSaving(true);
     try {
       await api.patch(`/api/products/${editingProduct.id}`, {
         name: editForm.name.trim(), category: editForm.category, price: Number(editForm.price), costPrice: Number(editForm.costPrice || 0), lowStockAt: Number(editForm.lowStockAt),
       });
+      if (editImage) await uploadProductImage(editingProduct.id, editImage);
+      setEditImage(null);
       setEditingProduct(null);
       fetchData();
     } catch (err: any) { Alert.alert('Could not save product', err.response?.data?.error || 'Please check the product details.'); }
@@ -88,7 +133,7 @@ export default function InventoryScreen() {
           <Text style={s.title}>📦 Inventory</Text>
           {data.lowStockCount > 0 && <Text style={s.lowStockAlert}>⚠️ {data.lowStockCount} items low on stock</Text>}
         </View>
-        <TouchableOpacity accessibilityLabel="Add Product" style={s.addBtn} onPress={() => setModal({ type: 'new' })}>
+        <TouchableOpacity accessibilityLabel="Add Product" style={s.addBtn} onPress={() => { setNewImage(null); setModal({ type: 'new' }); }}>
           <Ionicons name="add" size={20} color="#000" />
           <Text style={s.addBtnTxt}>Add Product</Text>
         </TouchableOpacity>
@@ -106,7 +151,7 @@ export default function InventoryScreen() {
             <Text style={s.sectionTitle}>⚠️ Low Stock Alerts</Text>
             {data.lowStock.map((p: any) => (
               <View key={p.id} style={[s.productRow, s.productRowLow]}>
-                <Text style={s.productEmoji}>{CAT_ICONS[p.category]||'📦'}</Text>
+                {p.imageUrl ? <Image source={storedImageSource(p.imageUrl)!} style={s.productThumb} /> : <Text style={s.productEmoji}>{CAT_ICONS[p.category]||'📦'}</Text>}
                 <View style={s.productInfo}><Text style={s.productName}>{p.name}</Text><Text style={s.productCat}>{CAT_LABELS[p.category]||p.category}</Text></View>
                 <Text style={[s.productStock, s.stockLow]}>{p.stock} left</Text>
                 <TouchableOpacity style={s.stockAddBtn} onPress={() => { setModal({ product: p, type: 'add' }); setAmount(''); }}>
@@ -126,7 +171,7 @@ export default function InventoryScreen() {
               {items.map((p: any) => (
                 <React.Fragment key={p.id}>
                 <View style={s.productRow}>
-                  <Text style={s.productEmoji}>{CAT_ICONS[p.category]}</Text>
+                  {p.imageUrl ? <Image source={storedImageSource(p.imageUrl)!} style={s.productThumb} /> : <View style={s.missingPhoto}><Ionicons name="image-outline" size={19} color={COLORS.textMuted} /></View>}
                   <View style={s.productInfo}>
                     <Text style={s.productName}>{p.name}</Text>
                     {!p.isActive && <Text style={s.inactiveBadge}>Inactive</Text>}
@@ -144,7 +189,7 @@ export default function InventoryScreen() {
                 </View>
                 {p.stockHistory?.[0] && <Text style={s.movementHint}>Latest movement: {p.stockHistory[0].change > 0 ? '+' : ''}{p.stockHistory[0].change} • {p.stockHistory[0].reason} • {new Date(p.stockHistory[0].createdAt).toLocaleDateString('en-PH')}</Text>}
                 <View style={s.productActions}>
-                  <TouchableOpacity accessibilityLabel="Edit Product" style={s.editBtn} onPress={() => openEditProduct(p)}><Ionicons name="pencil-outline" size={15} color={COLORS.primary} /><Text style={s.editBtnTxt}>Edit</Text></TouchableOpacity>
+                  <TouchableOpacity accessibilityLabel="Edit Product and Photo" style={s.editBtn} onPress={() => openEditProduct(p)}><Ionicons name="pencil-outline" size={15} color={COLORS.primary} /><Text style={s.editBtnTxt}>Edit / Photo</Text></TouchableOpacity>
                   <TouchableOpacity accessibilityLabel={p.isActive ? 'Deactivate Product' : 'Reactivate Product'} style={[s.statusBtn, p.isActive ? s.deactivateBtn : s.reactivateBtn]} onPress={() => setStatusProduct(p)}><Text style={[s.statusBtnTxt, p.isActive ? s.deactivateBtnTxt : s.reactivateBtnTxt]}>{p.isActive ? 'Deactivate' : 'Reactivate'}</Text></TouchableOpacity>
                 </View>
                 </React.Fragment>
@@ -189,6 +234,11 @@ export default function InventoryScreen() {
             <View style={{ width: 24 }} />
           </View>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.newModalContent}>
+            <ProductImagePicker
+              source={newImage ? { uri: newImage.uri } : null}
+              onGallery={() => chooseProductImage('new')}
+              onCamera={() => chooseProductImage('new', true)}
+            />
             {[['Name','name','default'],['Selling Price (₱)','price','decimal-pad'],['Cost Price (₱)','costPrice','decimal-pad'],['Initial Stock','stock','numeric'],['Low Stock Alert At','lowStockAt','numeric']].map(([label,field,kb]) => (
               <View key={field} style={s.fieldGroup}>
                 <Text style={s.label}>{label}</Text>
@@ -219,6 +269,11 @@ export default function InventoryScreen() {
             <View style={{ width: 24 }} />
           </View>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.newModalContent}>
+            <ProductImagePicker
+              source={editImage ? { uri: editImage.uri } : storedImageSource(editingProduct?.imageUrl)}
+              onGallery={() => chooseProductImage('edit')}
+              onCamera={() => chooseProductImage('edit', true)}
+            />
             {[['Product Name','name','default'],['Selling Price (PHP)','price','decimal-pad'],['Cost Price (PHP)','costPrice','decimal-pad'],['Low Stock Alert At','lowStockAt','numeric']].map(([label,field,kb]) => (
               <View key={field} style={s.fieldGroup}>
                 <Text style={s.label}>{label}</Text>
@@ -261,6 +316,18 @@ const Summary = ({ value, label, color }: any) => (
   </View>
 );
 
+const ProductImagePicker = ({ source, onGallery, onCamera }: any) => (
+  <View style={s.imageEditor}>
+    <Text style={s.label}>Product Photo</Text>
+    <Text style={s.imageHint}>Use a clear photo of this exact item—not a category photo.</Text>
+    {source ? <Image source={source} style={s.imagePreview} resizeMode="cover" /> : <View style={s.imagePlaceholder}><Ionicons name="image-outline" size={34} color={COLORS.textMuted} /><Text style={s.imagePlaceholderText}>No product photo</Text></View>}
+    <View style={s.imageActions}>
+      <TouchableOpacity style={s.imageButton} onPress={onGallery}><Ionicons name="images-outline" size={17} color={COLORS.primary} /><Text style={s.imageButtonText}>Gallery</Text></TouchableOpacity>
+      <TouchableOpacity style={s.imageButton} onPress={onCamera}><Ionicons name="camera-outline" size={17} color={COLORS.primary} /><Text style={s.imageButtonText}>Camera</Text></TouchableOpacity>
+    </View>
+  </View>
+);
+
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },
@@ -269,6 +336,16 @@ const s = StyleSheet.create({
   lowStockAlert: { fontSize: 12, color: COLORS.warning, marginTop: 2 },
   addBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.primary, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   addBtnTxt: { color: '#000', fontWeight: '700', fontSize: 13 },
+  productThumb: { width: 46, height: 46, borderRadius: 9, backgroundColor: COLORS.surfaceLight },
+  missingPhoto: { width: 46, height: 46, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceLight, borderWidth: 1, borderColor: COLORS.surfaceBorder },
+  imageEditor: { gap: 8, padding: 12, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.surfaceBorder },
+  imageHint: { color: COLORS.textMuted, fontSize: 12, lineHeight: 17 },
+  imagePreview: { width: '100%', height: 180, borderRadius: 11, backgroundColor: COLORS.surfaceLight },
+  imagePlaceholder: { height: 130, borderRadius: 11, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: COLORS.surfaceLight, borderWidth: 1, borderStyle: 'dashed', borderColor: COLORS.textMuted },
+  imagePlaceholderText: { color: COLORS.textMuted, fontSize: 12 },
+  imageActions: { flexDirection: 'row', gap: 8 },
+  imageButton: { flex: 1, minHeight: 42, borderRadius: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: COLORS.primary + '14', borderWidth: 1, borderColor: COLORS.primary + '55' },
+  imageButtonText: { color: COLORS.primary, fontWeight: '700', fontSize: 12 },
   content: { padding: 16, gap: 10 },
   summaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   summaryCard: { width: '47%', backgroundColor: COLORS.surface, borderRadius: 12, padding: 12, borderWidth: 1 },

@@ -1,6 +1,7 @@
 const { randomUUID } = require('crypto');
 const prisma = require('../config/prisma');
 const { awardSpendReward } = require('../utils/creditLifecycle');
+const productImageStorage = require('../services/productImageStorage.service');
 
 const POS_PAYMENT_METHODS = ['CASH', 'GCASH', 'MAYA', 'LOYALTY_CREDIT'];
 const PRODUCT_CATEGORIES = ['RICE_MEAL', 'DRINKS', 'ALCOHOLIC_BEVERAGES', 'COFFEE', 'BILLIARD_EQUIPMENT', 'SNACKS'];
@@ -89,6 +90,28 @@ const setProductActive = async (req, res) => {
     res.json(product);
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message || 'Failed to update product status.' });
+  }
+};
+
+const updateProductImage = async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Choose a product image to upload.' });
+  let uploaded = null;
+  try {
+    const existing = await prisma.product.findUnique({ where: { id: req.params.productId } });
+    if (!existing) return res.status(404).json({ error: 'Product not found.' });
+    uploaded = await productImageStorage.uploadProductImage(existing.id, req.file);
+    const product = await prisma.$transaction(async (tx) => {
+      const updated = await tx.product.update({ where: { id: existing.id }, data: { imageUrl: uploaded.publicUrl } });
+      await tx.staffAction.create({ data: { staffId: req.user.id, action: 'PRODUCT_IMAGE_UPDATED', targetId: updated.id, details: { name: updated.name, previousImageUrl: existing.imageUrl, imageUrl: updated.imageUrl } } });
+      return updated;
+    });
+    if (existing.imageUrl) productImageStorage.removeProductImage(existing.imageUrl).catch((err) => console.error('[Product Image] Previous image cleanup failed', err.message));
+    req.app.get('io')?.to('staff-tablet').emit('inventory:updated', { product });
+    res.json(product);
+  } catch (err) {
+    if (uploaded?.publicUrl) productImageStorage.removeProductImage(uploaded.publicUrl).catch(() => {});
+    console.error('[Product Image] Upload failed', { productId: req.params.productId, message: err.message });
+    res.status(err.status || 500).json({ error: err.message || 'Could not update the product image.' });
   }
 };
 
@@ -224,4 +247,4 @@ const voidOrder = async (req, res) => {
   } catch (err) { console.error(err); res.status(err.status || 500).json({ error: err.message || 'Failed to void order' }); }
 };
 
-module.exports = { POS_PAYMENT_METHODS, PRODUCT_CATEGORIES, receiptNumber, normalizeItems, getProducts, createProduct, updateProduct, setProductActive, updateStock, getInventoryReport, getStockMovements, createOrder, getOrders, voidOrder };
+module.exports = { POS_PAYMENT_METHODS, PRODUCT_CATEGORIES, receiptNumber, normalizeItems, getProducts, createProduct, updateProduct, updateProductImage, setProductActive, updateStock, getInventoryReport, getStockMovements, createOrder, getOrders, voidOrder };

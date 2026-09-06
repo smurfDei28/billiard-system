@@ -10,6 +10,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -21,18 +22,13 @@ import GCashSandboxSheet, { SandboxScenario } from "../../components/GCashSandbo
 const pretty = (v: string) =>
   v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const key = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const categoryImages: Record<string, any> = {
-  RICE_MEAL: require("../../../assets/products/rice-meal.jpg"),
-  DRINKS: require("../../../assets/products/drinks.jpg"),
-  ALCOHOLIC_BEVERAGES: require("../../../assets/products/alcoholic-beverages.jpg"),
-  COFFEE: require("../../../assets/products/coffee.jpg"),
-  BILLIARD_EQUIPMENT: require("../../../assets/products/billiard-equipment.jpg"),
-  SNACKS: require("../../../assets/products/snacks.jpg"),
-};
 const productImage = (product: any) => product.imageUrl
   ? { uri: /^https?:\/\//i.test(product.imageUrl) ? product.imageUrl : `${API_URL}${product.imageUrl}` }
-  : categoryImages[product.category] || categoryImages.SNACKS;
+  : null;
 export default function ShopScreen({ navigation }: any) {
+  const { width: screenWidth } = useWindowDimensions();
+  const columns = screenWidth >= 720 ? 4 : screenWidth >= 480 ? 3 : 2;
+  const cardWidth = Math.floor((screenWidth - 32 - ((columns - 1) * 10)) / columns);
   const [products, setProducts] = useState<any[]>([]),
     [cart, setCart] = useState<Record<string, number>>({}),
     [q, setQ] = useState(""),
@@ -282,7 +278,10 @@ export default function ShopScreen({ navigation }: any) {
         ))}
       </ScrollView>
       <FlatList
+        key={`shop-${columns}`}
         data={filtered}
+        numColumns={columns}
+        columnWrapperStyle={s.productRow}
         keyExtractor={(p) => p.id}
         contentContainerStyle={[s.list, filtered.length === 0 && s.emptyList]}
         keyboardShouldPersistTaps="handled"
@@ -296,9 +295,17 @@ export default function ShopScreen({ navigation }: any) {
         }
         renderItem={({ item }) => {
           const out = item.stock <= 0;
+          const image = productImage(item);
           return (
-            <View style={s.card}>
-              <Image source={productImage(item)} style={s.productImage} resizeMode="cover" />
+            <View style={[s.card, { width: cardWidth }]}>
+              {image ? (
+                <Image source={image} style={s.productImage} resizeMode="cover" />
+              ) : (
+                <View style={s.productImagePlaceholder}>
+                  <Ionicons name="image-outline" size={24} color={COLORS.textMuted} />
+                  <Text style={s.photoMissing} numberOfLines={1}>Photo coming soon</Text>
+                </View>
+              )}
               <View style={s.productInfo}>
                 <Text style={s.name} numberOfLines={2}>{item.name}</Text>
                 <Text style={s.meta} numberOfLines={1}>{pretty(item.category)}</Text>
@@ -537,6 +544,7 @@ const s = StyleSheet.create({
     lineHeight: 17,
   },
   list: { padding: 16, gap: 10 },
+  productRow: { gap: 10 },
   emptyList: { flexGrow: 1, justifyContent: "center" },
   card: {
     backgroundColor: COLORS.surface,
@@ -544,21 +552,22 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.surfaceBorder,
     overflow: "hidden",
-    flexDirection: "row",
-    minHeight: 126,
+    minHeight: 218,
   },
-  productImage: { width: 116, minHeight: 124, backgroundColor: COLORS.surfaceLight },
-  productInfo: { flex: 1, minWidth: 0, padding: 12, gap: 4 },
+  productImage: { width: "100%", height: 104, backgroundColor: COLORS.surfaceLight },
+  productImagePlaceholder: { width: "100%", height: 104, alignItems: "center", justifyContent: "center", gap: 5, backgroundColor: COLORS.surfaceLight },
+  photoMissing: { color: COLORS.textMuted, fontSize: 9, paddingHorizontal: 6 },
+  productInfo: { flex: 1, minWidth: 0, padding: 10, gap: 3 },
   productFooter: { marginTop: "auto", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  name: { color: COLORS.textPrimary, fontWeight: "800", fontSize: 15, flexShrink: 1 },
-  meta: { color: COLORS.textMuted, fontSize: 11 },
-  price: { color: COLORS.primary, fontWeight: "800", fontSize: 16 },
-  stock: { flex: 1, minWidth: 0, fontSize: 11, fontWeight: "700" },
+  name: { color: COLORS.textPrimary, fontWeight: "800", fontSize: 13, flexShrink: 1, minHeight: 32 },
+  meta: { color: COLORS.textMuted, fontSize: 9 },
+  price: { color: COLORS.primary, fontWeight: "800", fontSize: 14 },
+  stock: { flex: 1, minWidth: 0, fontSize: 9, fontWeight: "700" },
   add: {
     backgroundColor: COLORS.primary,
     flexShrink: 0,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 9,
   },
   addTxt: { color: "#00150f", fontWeight: "800" },

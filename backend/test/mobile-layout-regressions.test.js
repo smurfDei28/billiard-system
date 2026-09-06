@@ -22,8 +22,9 @@ test('shop filters keep the category strip compact and the empty state stable', 
   assert.match(shop, /style=\{s\.categoryScroller\}/);
   assert.match(shop, /categoryScroller:\s*\{[^}]*flexGrow:\s*0[^}]*height:\s*56/);
   assert.match(shop, /filtered\.length === 0 && s\.emptyList/);
-  assert.match(shop, /categoryImages/);
-  assert.match(shop, /productImage:\s*\{[^}]*width:\s*116/);
+  assert.doesNotMatch(shop, /categoryImages/);
+  assert.match(shop, /numColumns=\{columns\}/);
+  assert.match(shop, /productImage:\s*\{[^}]*width:\s*"100%"[^}]*height:\s*104/);
   assert.match(shop, /productInfo:\s*\{[^}]*flex:\s*1[^}]*minWidth:\s*0/);
   assert.match(shop, /numberOfLines=\{2\}>\{item\.name\}/);
 });
