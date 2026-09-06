@@ -4,6 +4,7 @@ const router = express.Router();
 const prisma = require('../config/prisma');
 const { authenticate, authorize } = require('../middleware/auth.middleware');
 const { PH_PHONE_PATTERN, normalizeOptionalPhone } = require('../utils/phone');
+const { presentGamifiedProfile } = require('../utils/gamification');
 
 router.get('/profile', authenticate, async (req, res) => {
   try {
@@ -12,7 +13,7 @@ router.get('/profile', authenticate, async (req, res) => {
       include: { membership: true, gamifiedProfile: true, loyaltyHistory: { take: 10, orderBy: { createdAt: 'desc' } } },
     });
     const { password, ...safe } = user;
-    res.json(safe);
+    res.json({ ...safe, gamifiedProfile: presentGamifiedProfile(user.gamifiedProfile) });
   } catch (err) { res.status(500).json({ error: 'Failed to fetch profile' }); }
 });
 
@@ -45,14 +46,16 @@ router.get('/public/:userId', authenticate, async (req, res) => {
       select: {
         id: true, firstName: true, lastName: true, avatarUrl: true, createdAt: true,
         membership: { select: { status: true, plan: true } },
-        gamifiedProfile: { select: { displayName: true, level: true, rank: true, totalWins: true, totalLosses: true, totalGames: true, badges: true } },
+        gamifiedProfile: { select: { displayName: true, level: true, xp: true, rank: true, totalWins: true, totalLosses: true, totalGames: true, badges: true } },
         championTitles: { select: { tournamentName: true, format: true, earnedAt: true }, orderBy: { earnedAt: 'desc' } },
         _count: { select: { tournamentEntries: true } },
       },
     });
     if (!user) return res.status(404).json({ error: 'Player not found.' });
     const tournamentWins = await prisma.tournamentEntry.count({ where: { userId: user.id, status: 'WINNER' } });
-    res.json({ ...user, tournamentWins, tournamentsJoined: user._count.tournamentEntries });
+    const presentedProfile = presentGamifiedProfile(user.gamifiedProfile, tournamentWins > 0 || user.championTitles.length > 0);
+    const { xp: _privateXp, ...publicProfile } = presentedProfile || {};
+    res.json({ ...user, gamifiedProfile: publicProfile, tournamentWins, tournamentsJoined: user._count.tournamentEntries });
   } catch (err) {
     console.error('[Public Player Profile Error]', err);
     res.status(500).json({ error: 'Could not load this player profile.' });
@@ -63,7 +66,7 @@ router.get('/', authenticate, authorize('ADMIN', 'STAFF'), async (req, res) => {
   const users = await prisma.user.findMany({
     select: { id: true, email: true, firstName: true, lastName: true, role: true, isEmailVerified: true, membership: true, gamifiedProfile: true, createdAt: true },
   });
-  res.json(users);
+  res.json(users.map((user) => ({ ...user, gamifiedProfile: presentGamifiedProfile(user.gamifiedProfile) })));
 });
 
 // Staff/Admin: search members (typeahead)
@@ -107,6 +110,5 @@ router.get('/search', authenticate, authorize('ADMIN', 'STAFF'), async (req, res
 });
 
 module.exports = router;
-
 
 

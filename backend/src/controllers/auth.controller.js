@@ -774,7 +774,7 @@ const login = async (req, res) => {
         role: user.role,
         isEmailVerified: user.isEmailVerified,
         membership: user.membership,
-        gamifiedProfile: user.gamifiedProfile,
+        gamifiedProfile: presentGamifiedProfile(user.gamifiedProfile),
       },
     });
   } catch (err) {

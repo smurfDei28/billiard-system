@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth, api } from '../../context/AuthContext';
-import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS, rankProgressForXp } from '../../constants';
+import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS, levelForXp, rankProgressForXp } from '../../constants';
 import { formatCredits } from '../../utils/credits';
 
 const BADGES: Record<string, { icon: string; label: string }> = {
@@ -64,6 +64,7 @@ export default function ProfileScreen({ route }: any) {
   const rankProgress = rankProgressForXp(profile?.xp || 0);
   const xpToNext = rankProgress.next?.minXp;
   const xpPct = rankProgress.progress;
+  const level = levelForXp(profile?.xp || 0);
   const milestoneIntervalHours = 20;
   const totalHoursPlayed = Number(membership?.totalHoursPlayed || 0);
   const hoursPlayed = totalHoursPlayed.toFixed(1);
@@ -102,7 +103,7 @@ export default function ProfileScreen({ route }: any) {
         {/* XP Bar */}
         <View style={s.xpSection}>
           <View style={s.xpRow}>
-            <Text style={s.xpLevel}>Level {profile?.level || 1}</Text>
+            <Text style={s.xpLevel}>Level {level}</Text>
             <Text style={s.xpCount}>{xpToNext ? `${profile?.xp || 0} / ${xpToNext} XP` : 'Max rank'}</Text>
           </View>
           <View style={s.xpBar}><View style={[s.xpFill, { width: `${xpPct * 100}%`, backgroundColor: rankCfg.color }]} /></View>

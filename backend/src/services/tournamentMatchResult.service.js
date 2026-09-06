@@ -89,6 +89,7 @@ const completeTournamentMatchWithDb = async ({ db, matchId, player1Score, player
     data: { totalLosses: { increment: 1 }, totalGames: { increment: 1 }, xp: { increment: TOURNAMENT_LOSS_XP }, winStreak: 0 },
   });
   await updatePlayerRank(db, winnerId);
+  await updatePlayerRank(db, loserId);
 
   let pendingFeeNotification = null;
   let lossFeeStatus = null;

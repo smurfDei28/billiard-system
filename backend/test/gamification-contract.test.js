@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { rankForXp } = require('../src/utils/gamification');
+const { rankForXp, levelForXp } = require('../src/utils/gamification');
 
 const sensorSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'controllers', 'sensor.controller.js'), 'utf8');
 const resultSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'tournamentMatchResult.service.js'), 'utf8');
@@ -31,4 +31,23 @@ test('rank thresholds use the profile XP progression', () => {
   assert.equal(rankForXp(500), 'Shark');
   assert.equal(rankForXp(1000), 'Legend');
   assert.equal(rankForXp(2000), 'Elite');
+  assert.equal(levelForXp(25), 1);
+  assert.equal(levelForXp(750), 3);
+});
+
+test('historical profile repair changes only derived level and rank fields', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const migration = fs.readFileSync(path.join(__dirname, '..', 'prisma', 'migrations', '20260906020000_repair_gamified_profile_levels', 'migration.sql'), 'utf8');
+  assert.match(migration, /UPDATE "gamified_profiles"/);
+  assert.match(migration, /"level" = CASE/);
+  assert.match(migration, /"rank" = CASE/);
+  assert.doesNotMatch(migration, /DELETE|DROP|TRUNCATE|UPDATE\s+"gamified_profiles"[\s\S]*"xp"\s*=/i);
+});
+
+test('both tournament participants have their derived rank and level refreshed after XP awards', () => {
+  const winnerUpdate = resultSource.indexOf('await updatePlayerRank(db, winnerId);');
+  const loserUpdate = resultSource.indexOf('await updatePlayerRank(db, loserId);');
+  assert.ok(winnerUpdate > 0);
+  assert.ok(loserUpdate > winnerUpdate);
 });

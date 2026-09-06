@@ -68,8 +68,8 @@ async function main() {
     create: {
       userId: member.id,
       displayName: 'JuanShark',
-      level: 5,
-      xp: 450,
+      level: 3,
+      xp: 500,
       totalWins: 12,
       totalLosses: 8,
       totalGames: 20,
@@ -202,4 +202,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-

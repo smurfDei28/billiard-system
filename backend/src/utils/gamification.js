@@ -7,6 +7,7 @@ const RANKS = Object.freeze([
 ]);
 
 const rankForXp = (xp = 0) => [...RANKS].reverse().find((rank) => Number(xp) >= rank.minXp)?.name || 'Rookie';
+const levelForXp = (xp = 0) => RANKS.findIndex((rank) => rank.name === rankForXp(xp)) + 1;
 
 const rankProgressForXp = (xp = 0) => {
   const currentIndex = RANKS.findIndex((rank) => rank.name === rankForXp(xp));
@@ -26,6 +27,7 @@ const badgesForProfile = (profile, hasTournamentWin = false) => {
 const presentGamifiedProfile = (profile, hasTournamentWin = false) => profile && ({
   ...profile,
   rank: rankForXp(profile.xp),
+  level: levelForXp(profile.xp),
   badges: badgesForProfile(profile, hasTournamentWin),
 });
 
@@ -34,8 +36,8 @@ const updatePlayerRank = async (db, userId, { hasTournamentWin = false } = {}) =
   if (!profile) return null;
   return db.gamifiedProfile.update({
     where: { userId },
-    data: { rank: rankForXp(profile.xp), badges: badgesForProfile(profile, hasTournamentWin) },
+    data: { rank: rankForXp(profile.xp), level: levelForXp(profile.xp), badges: badgesForProfile(profile, hasTournamentWin) },
   });
 };
 
-module.exports = { RANKS, rankForXp, rankProgressForXp, badgesForProfile, presentGamifiedProfile, updatePlayerRank };
+module.exports = { RANKS, rankForXp, levelForXp, rankProgressForXp, badgesForProfile, presentGamifiedProfile, updatePlayerRank };

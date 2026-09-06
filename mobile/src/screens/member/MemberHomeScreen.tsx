@@ -6,7 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../context/AuthContext';
-import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS, rankProgressForXp } from '../../constants';
+import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS, levelForXp, rankProgressForXp } from '../../constants';
 import { formatCredits, normalizeCreditBalance } from '../../utils/credits';
 
 export default function MemberHomeScreen({ navigation }: any) {
@@ -69,6 +69,7 @@ export default function MemberHomeScreen({ navigation }: any) {
   const rankProgress = rankProgressForXp(profile?.xp || 0);
   const xpToNext = rankProgress.next?.minXp;
   const xpProgress = rankProgress.progress;
+  const level = levelForXp(profile?.xp || 0);
   const availableTables = tables.filter((t: any) => t.status === 'AVAILABLE').length;
   const unreadCount = notifications.length;
   const activeSession = tables.flatMap((table: any) => (table.sessions || []).map((session: any) => ({ ...session, table }))).find((session: any) => session.user?.id === user?.id);
@@ -109,7 +110,7 @@ export default function MemberHomeScreen({ navigation }: any) {
             <View style={[styles.rankBadge, { backgroundColor: rankConfig.color + '20' }]}>
               <Text style={[styles.rankText, { color: rankConfig.color }]}>{rank}</Text>
             </View>
-            <Text style={styles.levelText}>Level {profile?.level || 1}</Text>
+            <Text style={styles.levelText}>Level {level}</Text>
           </View>
           <View style={styles.profileStats}>
             <View style={styles.statItem}>

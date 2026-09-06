@@ -60,6 +60,11 @@ export const rankProgressForXp = (xp: number) => {
   return { current, next, progress: next ? Math.min(1, Math.max(0, (xp - current.minXp) / (next.minXp - current.minXp))) : 1 };
 };
 
+export const levelForXp = (xp: number) => {
+  const ranks = Object.values(RANK_CONFIG);
+  return ranks.reduce((level, rank, index) => xp >= rank.minXp ? index + 1 : level, 1);
+};
+
 // Membership plans
 export const MEMBERSHIP_PLANS = {
   BASIC: {
