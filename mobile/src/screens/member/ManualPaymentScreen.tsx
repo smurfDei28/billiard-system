@@ -79,7 +79,10 @@ export default function ManualPaymentScreen({ route }: any) {
   const isSandbox = method?.method === "ACQUIREMOCK_GCASH_SANDBOX";
   const isOrderPayment = purpose === "ORDER";
   const isCreditTopUp = purpose === "CREDIT_TOPUP";
-  const hasRestoredSandboxOrderPayment = isOrderPayment && Boolean(sandboxPayment);
+  const sandboxPaymentOrderId = sandboxPayment?.order?.id || sandboxPayment?.payment?.orderId;
+  const hasRestoredSandboxOrderPayment = isOrderPayment
+    && sandboxPaymentOrderId === orderId
+    && normalizeSandboxStatus(sandboxPayment?.sandbox?.status) === "pending";
   const selectedOrder = orders.find((order: any) => order.id === orderId);
   const pendingShopPayments = orders.filter(
     (order: any) =>
@@ -223,7 +226,38 @@ export default function ManualPaymentScreen({ route }: any) {
     setSandboxPayment({ ...data, sandbox: { ...data.sandbox, status: status || data.sandbox.status } });
     setSandboxRestoreError("");
     setHistory((previous) => [data.payment, ...previous.filter((payment) => payment.id !== data.payment.id)]);
+    if (isOrderPayment && data.order) {
+      setOrders((previous) => {
+        if (status === "paid" || data.order.paymentStatus !== "PENDING") {
+          return previous.filter((order) => order.id !== data.order.id);
+        }
+        return previous.map((order) => order.id === data.order.id ? {
+          ...order,
+          ...data.order,
+          manualPayments: [data.payment, ...(order.manualPayments || []).filter((payment: any) => payment.id !== data.payment.id)],
+        } : order);
+      });
+    }
     if (isCreditTopUp && status === "paid") await refreshUser();
+  };
+
+  const selectPendingShopOrder = (order: any) => {
+    // Never carry a completed/failed attempt from one order into another.
+    // A stale result made the next order look restored and hid its Proceed button.
+    if (order.id !== sandboxPaymentOrderId) {
+      setSandboxPayment(null);
+      setSandboxRestoreError("");
+      setSandboxScenario("success");
+      setSandboxCheckoutOpen(false);
+    }
+    setPurpose("ORDER");
+    setOrderId(order.id);
+    setTopUpAmount("");
+    setMethod(
+      order.paymentMethod === "GCASH" && sandboxEnabled
+        ? { method: "ACQUIREMOCK_GCASH_SANDBOX", businessName: "GCash Sandbox / Mock" }
+        : methods.find((item: any) => item.method === order.paymentMethod) || method,
+    );
   };
 
   const submitSandbox = async () => {
@@ -305,7 +339,7 @@ export default function ManualPaymentScreen({ route }: any) {
     // A finished top-up is a receipt, not the next checkout. Clearing it here
     // ensures a new amount always creates a new provider transaction. Pending
     // attempts stay restorable so the member can refresh or cancel them.
-    if (isCreditTopUp && status && status !== "pending") {
+    if ((isCreditTopUp || isOrderPayment) && status && status !== "pending") {
       setSandboxPayment(null);
       setSandboxRestoreError("");
       setSandboxScenario("success");
@@ -535,17 +569,7 @@ export default function ManualPaymentScreen({ route }: any) {
                           borderRadius: 8,
                           marginTop: 5,
                         }}
-                        onPress={() => {
-                          setPurpose("ORDER");
-                          setOrderId(order.id);
-                          setTopUpAmount("");
-                          setMethod(
-                            methods.find(
-                              (item: any) =>
-                                item.method === order.paymentMethod,
-                            ) || method,
-                          );
-                        }}
+                        onPress={() => selectPendingShopOrder(order)}
                       >
                         <Text
                           style={{

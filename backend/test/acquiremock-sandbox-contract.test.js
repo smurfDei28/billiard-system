@@ -106,7 +106,7 @@ test('member UI exposes explicit sandbox outcomes and refreshes through IBHMS', 
 
 test('a completed credit top-up receipt is cleared before the next checkout', () => {
   assert.match(mobileSource, /const closeSandboxCheckout = \(\) =>/);
-  assert.match(mobileSource, /isCreditTopUp && status && status !== "pending"/);
+  assert.match(mobileSource, /\(isCreditTopUp \|\| isOrderPayment\) && status && status !== "pending"/);
   assert.match(mobileSource, /setSandboxPayment\(null\)/);
   assert.match(mobileSource, /onClose=\{closeSandboxCheckout\}/);
 });
@@ -125,9 +125,17 @@ test('reopening a Shop order restores its newest AcquireMock attempt instead of 
   assert.match(mobileSource, /const sandboxAttempts = order\.manualPayments\?\.filter\(isSandboxOrderAttempt\) \|\| \[\]/);
   assert.match(mobileSource, /const latestSandboxAttempt = sandboxAttempts\.find\(\(payment: any\) => payment\.status === "PENDING"\) \|\| sandboxAttempts\[0\]/);
   assert.match(mobileSource, /\/api\/payments\/sandbox\/gcash\/order\/payment\/\$\{encodeURIComponent\(latestSandboxAttempt\.id\)\}/);
-  assert.match(mobileSource, /const hasRestoredSandboxOrderPayment = isOrderPayment && Boolean\(sandboxPayment\)/);
+  assert.match(mobileSource, /sandboxPaymentOrderId === orderId[\s\S]*normalizeSandboxStatus\(sandboxPayment\?\.sandbox\?\.status\) === "pending"/);
   assert.match(mobileSource, /!hasRestoredSandboxOrderPayment && <TouchableOpacity/);
   assert.match(mobileSource, /isSandbox \? "Payment details" : `3\. \$\{isCash \? "Cash payment details" : "Payment proof"\}`/);
+});
+
+test('completing one pending Shop order cannot hide payment for the next order', () => {
+  assert.match(mobileSource, /const selectPendingShopOrder = \(order: any\) =>/);
+  assert.match(mobileSource, /if \(order\.id !== sandboxPaymentOrderId\) \{[\s\S]*setSandboxPayment\(null\)/);
+  assert.match(mobileSource, /onPress=\{\(\) => selectPendingShopOrder\(order\)\}/);
+  assert.match(mobileSource, /status === "paid" \|\| data\.order\.paymentStatus !== "PENDING"[\s\S]*previous\.filter\(\(order\) => order\.id !== data\.order\.id\)/);
+  assert.match(mobileSource, /\(isCreditTopUp \|\| isOrderPayment\) && status && status !== "pending"/);
 });
 
 test('My Orders distinguishes the pending order from its current AcquireMock payment attempt', () => {
