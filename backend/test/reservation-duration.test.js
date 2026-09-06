@@ -9,6 +9,7 @@ const {
 } = require('../src/controllers/reservation.controller');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'controllers', 'reservation.controller.js'), 'utf8');
+const mobileSource = fs.readFileSync(path.join(__dirname, '..', '..', 'mobile', 'src', 'screens', 'member', 'ReservationScreen.tsx'), 'utf8');
 const start = new Date('2026-08-12T10:00:00.000Z');
 const endsAfter = (minutes) => new Date(start.getTime() + minutes * 60 * 1000);
 
@@ -30,4 +31,13 @@ test('duration validation leaves existing reservation pricing and overlap guards
   assert.match(source, /const estimatedCost = \(reservedMinutes \/ 60\) \* table\.ratePerHour/);
   assert.match(source, /status: \{ in: \['PENDING', 'APPROVED'\] \}/);
   assert.match(source, /startTime: \{ lt: end \}, endTime: \{ gt: start \}/);
+});
+
+test('member and backend reservation boundaries use visible minute precision', () => {
+  assert.match(source, /const start = normalizeReservationMinute\(startTime\)/);
+  assert.match(source, /const end = normalizeReservationMinute\(endTime\)/);
+  assert.match(source, /possibleConflicts\.find[\s\S]*normalizeReservationMinute\(reservation\.endTime\)/);
+  assert.match(mobileSource, /normalized\.setSeconds\(0, 0\)/);
+  assert.match(mobileSource, /startTime: normalizedStart\.toISOString\(\)/);
+  assert.match(mobileSource, /endTime: normalizedEnd\.toISOString\(\)/);
 });

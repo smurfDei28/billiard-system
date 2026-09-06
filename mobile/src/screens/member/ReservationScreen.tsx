@@ -27,6 +27,11 @@ const STATUS_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
 };
 
 const MIN_RESERVATION_DURATION_MS = 30 * 60 * 1000;
+const normalizeToMinute = (value: Date) => {
+  const normalized = new Date(value);
+  normalized.setSeconds(0, 0);
+  return normalized;
+};
 
 // ─── DatePickerField ──────────────────────────────────────────────────────────
 const DatePickerField = ({
@@ -43,11 +48,12 @@ const DatePickerField = ({
   const handleChange = (_: any, selected?: Date) => {
     if (Platform.OS !== 'ios') setShow(false);
     if (!selected) return;
-    if (minimumDate && selected < minimumDate) {
+    const selectedMinute = normalizeToMinute(selected);
+    if (minimumDate && selectedMinute < normalizeToMinute(minimumDate)) {
       Alert.alert('Invalid Date', 'Please select a future date and time.');
       return;
     }
-    onChange(selected);
+    onChange(selectedMinute);
   };
 
   return (
@@ -92,8 +98,8 @@ export default function ReservationScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [policyModal, setPolicyModal] = useState(false);
 
-  const defaultStart = new Date(Date.now() + 60 * 60 * 1000);
-  const defaultEnd = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  const defaultStart = normalizeToMinute(new Date(Date.now() + 60 * 60 * 1000));
+  const defaultEnd = normalizeToMinute(new Date(Date.now() + 2 * 60 * 60 * 1000));
 
   const [form, setForm] = useState({
     tableId: '',
@@ -132,8 +138,8 @@ export default function ReservationScreen() {
   useEffect(() => { fetchData(); }, []);
 
   const openCreateModal = () => {
-    const start = new Date(Date.now() + 60 * 60 * 1000);
-    const end = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const start = normalizeToMinute(new Date(Date.now() + 60 * 60 * 1000));
+    const end = normalizeToMinute(new Date(Date.now() + 2 * 60 * 60 * 1000));
     setForm({ tableId: tables[0]?.id || '', startTime: start, endTime: end, notes: '', paymentMethod: 'CREDITS' });
     setCreateModal(true);
   };
@@ -141,17 +147,19 @@ export default function ReservationScreen() {
   const submitReservation = async () => {
     if (!form.tableId) return Alert.alert('Error', 'Please select a table.');
 
+    const normalizedStart = normalizeToMinute(form.startTime);
+    const normalizedEnd = normalizeToMinute(form.endTime);
     const now = new Date();
-    if (form.startTime <= now)
+    if (normalizedStart <= now)
       return Alert.alert('Invalid Time', 'Start time must be in the future.');
-    if (form.endTime <= form.startTime)
+    if (normalizedEnd <= normalizedStart)
       return Alert.alert('Invalid Time', 'End time must be after start time.');
-    if (form.endTime.getTime() - form.startTime.getTime() < MIN_RESERVATION_DURATION_MS)
+    if (normalizedEnd.getTime() - normalizedStart.getTime() < MIN_RESERVATION_DURATION_MS)
       return Alert.alert('Invalid Duration', 'Reservations must be at least 30 minutes.');
 
     const table = tables.find((t) => t.id === form.tableId);
     const estimatedCredits = table
-      ? Math.ceil((form.endTime.getTime() - form.startTime.getTime()) / 3600000 * table.ratePerHour)
+      ? Math.ceil((normalizedEnd.getTime() - normalizedStart.getTime()) / 3600000 * table.ratePerHour)
       : 0;
 
     // Reject on user side if credits are insufficient (backend also enforces this).
@@ -175,8 +183,8 @@ export default function ReservationScreen() {
     try {
       await api.post('/api/reservations', {
         tableId: form.tableId,
-        startTime: form.startTime.toISOString(),
-        endTime: form.endTime.toISOString(),
+        startTime: normalizedStart.toISOString(),
+        endTime: normalizedEnd.toISOString(),
         notes: form.notes.trim() || undefined,
         paymentMethod: form.paymentMethod,
       });

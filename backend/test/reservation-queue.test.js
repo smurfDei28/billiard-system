@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { reservationIntervalsOverlap } = require('../src/controllers/reservation.controller');
+const { normalizeReservationMinute, reservationIntervalsOverlap } = require('../src/controllers/reservation.controller');
 const { activeReservationScheduleWhere, buildReservationQueue } = require('../src/controllers/queue.controller');
 const { hasMinimumWalkInDuration, resolveWalkInExpectedEnd } = require('../src/controllers/table.controller');
 
@@ -9,6 +9,17 @@ test('reservation overlap uses proper interval boundaries', () => {
   const existingEnd = new Date('2026-08-17T21:00:00+08:00');
   assert.equal(reservationIntervalsOverlap(new Date('2026-08-17T20:30:00+08:00'), new Date('2026-08-17T21:30:00+08:00'), existingStart, existingEnd), true);
   assert.equal(reservationIntervalsOverlap(new Date('2026-08-17T21:00:00+08:00'), new Date('2026-08-17T22:00:00+08:00'), existingStart, existingEnd), false);
+});
+
+test('hidden seconds cannot block a reservation at the displayed adjacent minute', () => {
+  const existingStart = normalizeReservationMinute('2026-08-17T23:05:42+08:00');
+  const existingEnd = normalizeReservationMinute('2026-08-18T00:05:42+08:00');
+  const requestedStart = normalizeReservationMinute('2026-08-18T00:05:00+08:00');
+  const requestedEnd = normalizeReservationMinute('2026-08-18T01:05:00+08:00');
+
+  assert.equal(existingStart.toISOString(), '2026-08-17T15:05:00.000Z');
+  assert.equal(existingEnd.toISOString(), requestedStart.toISOString());
+  assert.equal(reservationIntervalsOverlap(requestedStart, requestedEnd, existingStart, existingEnd), false);
 });
 
 test('reservation queue positions are ordered by scheduled start time per table', () => {

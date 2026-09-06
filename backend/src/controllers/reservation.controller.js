@@ -6,6 +6,11 @@ const {
 } = require('../utils/reservationMeta');
 
 const MIN_RESERVATION_DURATION_MS = 30 * 60 * 1000;
+const normalizeReservationMinute = (value) => {
+  const normalized = new Date(value);
+  normalized.setSeconds(0, 0);
+  return normalized;
+};
 const hasMinimumReservationDuration = (start, end) => end.getTime() - start.getTime() >= MIN_RESERVATION_DURATION_MS;
 const isOnlineReservationPaymentMethod = (paymentMethod) => !paymentMethod || paymentMethod === 'CREDITS';
 const reservationIntervalsOverlap = (requestedStart, requestedEnd, existingStart, existingEnd) =>
@@ -42,8 +47,10 @@ const requestReservation = async (req, res) => {
     return res.status(400).json({ error: 'Cash payment is not available for online reservations. Please use Credits.' });
   }
 
-  const start = new Date(startTime);
-  const end = new Date(endTime);
+  // The UI schedules reservations by the minute. Discard hidden seconds so a
+  // displayed 12:05 AM end can be followed by a 12:05 AM start exactly.
+  const start = normalizeReservationMinute(startTime);
+  const end = normalizeReservationMinute(endTime);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
     return res.status(400).json({ error: 'Reservation start and end times must be valid.' });
@@ -83,7 +90,7 @@ const requestReservation = async (req, res) => {
     }
 
     // Check for overlapping APPROVED or PENDING reservations
-    const conflict = await prisma.reservation.findFirst({
+    const possibleConflicts = await prisma.reservation.findMany({
       where: {
         tableId,
         status: { in: ['PENDING', 'APPROVED'] },
@@ -92,6 +99,12 @@ const requestReservation = async (req, res) => {
         ],
       },
     });
+    const conflict = possibleConflicts.find((reservation) => reservationIntervalsOverlap(
+      start,
+      end,
+      normalizeReservationMinute(reservation.startTime),
+      normalizeReservationMinute(reservation.endTime),
+    ));
 
     if (conflict) {
       return res.status(409).json({
@@ -365,6 +378,7 @@ const getAllReservations = async (req, res) => {
 
 module.exports = {
   MIN_RESERVATION_DURATION_MS,
+  normalizeReservationMinute,
   hasMinimumReservationDuration,
   isOnlineReservationPaymentMethod,
   reservationIntervalsOverlap,
