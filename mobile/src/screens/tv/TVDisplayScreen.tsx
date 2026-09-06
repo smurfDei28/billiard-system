@@ -205,7 +205,7 @@ export default function TVDisplayScreen() {
         {/* Right: Queue + Tournament */}
         <View style={styles.rightPanel}>
           {/* Queue */}
-          <Text style={styles.panelTitle}>UPCOMING RESERVATIONS</Text>
+          <Text style={styles.panelTitle}>CURRENT &amp; UPCOMING RESERVATIONS</Text>
           {queue.length === 0 ? (
             <View style={styles.emptyQueue}>
               <Text style={styles.emptyQueueText}>No upcoming reservations</Text>

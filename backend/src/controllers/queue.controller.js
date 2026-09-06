@@ -27,6 +27,12 @@ const enrichQueueEntries = async (entries) => {
 };
 
 const activeQueueOrder = { joinedAt: 'asc' };
+const activeReservationScheduleWhere = (now = new Date()) => ({
+  status: { in: ['PENDING', 'APPROVED'] },
+  // Keep a reservation visible for its whole scheduled interval. Filtering on
+  // startTime made TV entries disappear at the moment they began.
+  endTime: { gt: now },
+});
 
 // Reservations are the authoritative schedule for future table use. QueueEntry
 // remains available for historical/legacy operational records only.
@@ -126,7 +132,7 @@ const joinQueue = async (req, res) => {
 const getQueue = async (req, res) => {
   try {
     const reservations = await prisma.reservation.findMany({
-      where: { status: { in: ['PENDING', 'APPROVED'] }, startTime: { gt: new Date() } },
+      where: activeReservationScheduleWhere(),
       orderBy: [{ tableId: 'asc' }, { startTime: 'asc' }],
       include: {
         table: true,
@@ -140,7 +146,7 @@ const getQueue = async (req, res) => {
 const getTableQueue = async (req, res) => {
   try {
     const reservations = await prisma.reservation.findMany({
-      where: { tableId: req.params.tableId, status: { in: ['PENDING', 'APPROVED'] }, startTime: { gt: new Date() } },
+      where: { tableId: req.params.tableId, ...activeReservationScheduleWhere() },
       orderBy: { startTime: 'asc' },
       include: { table: true, user: { select: { id: true, firstName: true, lastName: true } } },
     });
@@ -195,4 +201,4 @@ const removeEntry = async (req, res, allowOwnEntry) => {
 const removeFromQueue = (req, res) => removeEntry(req, res, false);
 const leaveQueue = (req, res) => removeEntry(req, res, true);
 
-module.exports = { ACTIVE_QUEUE_STATUSES, buildReservationQueue, joinQueue, getQueue, getTableQueue, callQueueEntry, removeFromQueue, leaveQueue, callFirstWaitingForAvailableTable, emitQueueUpdated };
+module.exports = { ACTIVE_QUEUE_STATUSES, activeReservationScheduleWhere, buildReservationQueue, joinQueue, getQueue, getTableQueue, callQueueEntry, removeFromQueue, leaveQueue, callFirstWaitingForAvailableTable, emitQueueUpdated };

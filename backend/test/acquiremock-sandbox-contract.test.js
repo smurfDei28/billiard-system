@@ -42,6 +42,7 @@ test('sandbox shop payments use the server-authoritative order total and the sha
   assert.match(paymentSource, /finalizePendingMemberOrder\(tx, \{ orderId: payment\.orderId, staffId: null \}\)/);
   assert.match(paymentSource, /router\.get\('\/sandbox\/gcash\/order\/payment\/:paymentId'/);
   assert.match(paymentSource, /router\.post\('\/sandbox\/gcash\/order\/payment\/:paymentId\/cancel'/);
+  assert.match(paymentSource, /router\.post\('\/sandbox\/gcash\/order\/payment\/:paymentId\/complete'/);
 });
 
 test('legacy AcquireMock mockReference records refresh through the provider UUID and normalize known statuses', () => {
@@ -89,6 +90,9 @@ test('member UI exposes explicit sandbox outcomes and refreshes through IBHMS', 
   assert.match(mobileSource, /Development testing only\. No real GCash transaction will occur\./);
   assert.match(mobileSource, /\/api\/payments\/sandbox\/gcash\//);
   assert.match(sandboxSheetSource, /Check payment status/);
+  assert.match(sandboxSheetSource, /Complete test payment/);
+  assert.match(sandboxSheetSource, /stays pending until you complete or cancel it/);
+  assert.doesNotMatch(sandboxSheetSource, /setTimeout\(onRefresh/);
   assert.match(sandboxSheetSource, /Try again/);
   assert.match(sandboxSheetSource, /NO REAL MONEY/);
   assert.match(sandboxSheetSource, /Success/);

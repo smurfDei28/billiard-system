@@ -278,6 +278,22 @@ export default function ManualPaymentScreen({ route }: any) {
     }
   };
 
+  const completeSandbox = async () => {
+    if (!sandboxPayment?.payment?.id || sandboxBusy) return;
+    setSandboxBusy(true);
+    try {
+      const endpoint = isOrderPayment
+        ? `/api/payments/sandbox/gcash/order/payment/${encodeURIComponent(sandboxPayment.payment.id)}/complete`
+        : `/api/payments/sandbox/gcash/${encodeURIComponent(sandboxPayment.payment.id)}/complete`;
+      const { data } = await api.post(endpoint);
+      await applySandboxResult(data);
+    } catch (err: any) {
+      Alert.alert("Could not complete sandbox payment", err.response?.data?.error || "Could not reach the development sandbox.");
+    } finally {
+      setSandboxBusy(false);
+    }
+  };
+
   const startNewSandboxTransaction = () => {
     setSandboxPayment(null);
     setSandboxRestoreError("");
@@ -824,33 +840,34 @@ export default function ManualPaymentScreen({ route }: any) {
           ) : (
             history.slice(0, 6).map((payment) => (
               <View key={payment.id} style={s.history}>
-                <View>
-                  <Text style={s.historyTitle}>
+                <View style={s.historyHeader}>
+                  <Text style={s.historyTitle} numberOfLines={2}>
                     {label(payment.purpose)} • PHP{" "}
                     {Number(payment.amount).toFixed(2)}
                   </Text>
-                  <Text style={s.muted}>
-                    {payment.method} • {payment.referenceNo}
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      s.status,
+                      {
+                        color:
+                          payment.status === "APPROVED"
+                            ? COLORS.success
+                            : payment.status === "REJECTED"
+                              ? COLORS.error
+                              : COLORS.warning,
+                      },
+                    ]}
+                  >
+                    {payment.status}
                   </Text>
-                  {payment.reviewerRemarks && (
-                    <Text style={s.remarks}>{payment.reviewerRemarks}</Text>
-                  )}
                 </View>
-                <Text
-                  style={[
-                    s.status,
-                    {
-                      color:
-                        payment.status === "APPROVED"
-                          ? COLORS.success
-                          : payment.status === "REJECTED"
-                            ? COLORS.error
-                            : COLORS.warning,
-                    },
-                  ]}
-                >
-                  {payment.status}
+                <Text style={s.paymentReference} numberOfLines={1} ellipsizeMode="middle">
+                  {payment.method} • {payment.referenceNo}
                 </Text>
+                {payment.reviewerRemarks && (
+                  <Text style={s.remarks}>{payment.reviewerRemarks}</Text>
+                )}
               </View>
             ))
           )}
@@ -868,6 +885,7 @@ export default function ManualPaymentScreen({ route }: any) {
         onConfirm={submitSandbox}
         onRefresh={refreshSandbox}
         onCancel={cancelSandbox}
+        onComplete={completeSandbox}
         onRetry={startNewSandboxTransaction}
         onClose={closeSandboxCheckout}
       />
@@ -1048,11 +1066,12 @@ const s = StyleSheet.create({
     paddingVertical: 10,
     borderTopWidth: 1,
     borderColor: COLORS.surfaceBorder,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 8,
+    gap: 4,
   },
-  historyTitle: { fontWeight: "700", color: COLORS.textPrimary },
+  historyHeader: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  historyTitle: { flex: 1, minWidth: 0, fontWeight: "700", color: COLORS.textPrimary },
+  paymentReference: { color: COLORS.textMuted, fontSize: 11 },
+  status: { flexShrink: 0, maxWidth: "32%", fontSize: 9, fontWeight: "800", textAlign: "right" },
   seeMoreBtn: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 10, borderWidth: 1, borderColor: COLORS.primary + "55", backgroundColor: COLORS.surfaceLight, marginTop: 4 },
   seeMoreTxt: { color: COLORS.primary, fontSize: 13, fontWeight: "800" },
   muted: { color: COLORS.textMuted, fontSize: 12, marginTop: 3 },
@@ -1102,7 +1121,6 @@ const s = StyleSheet.create({
   quickAmountActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "18" },
   quickAmountText: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "700" },
   quickAmountTextActive: { color: COLORS.primary },
-  status: { fontWeight: "800", fontSize: 11 },
   remarks: { color: COLORS.error, fontSize: 12, marginTop: 4 },
   viewerOverlay: {
     flex: 1,

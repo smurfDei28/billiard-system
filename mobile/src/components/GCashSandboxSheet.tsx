@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -22,6 +22,7 @@ type Props = {
   onConfirm: () => void;
   onRefresh?: () => void;
   onCancel?: () => void;
+  onComplete?: () => void;
   onRetry?: () => void;
   onClose: () => void;
 };
@@ -37,8 +38,8 @@ const scenarios: Array<{ value: SandboxScenario; label: string }> = [
 
 const BLUE = "#0878F9";
 const statusCopy: Record<string, { title: string; detail: string; icon: any; color: string }> = {
-  paid: { title: "Payment successful", detail: "Your test payment was confirmed automatically.", icon: "checkmark-circle", color: "#16A06A" },
-  pending: { title: "Payment processing", detail: "The sandbox is waiting for automatic confirmation.", icon: "time", color: "#E39A16" },
+  paid: { title: "Payment successful", detail: "Your test payment was confirmed and recorded.", icon: "checkmark-circle", color: "#16A06A" },
+  pending: { title: "Payment pending", detail: "This test payment stays pending until you complete or cancel it.", icon: "time", color: "#E39A16" },
   failed: { title: "Payment failed", detail: "No funds were transferred. You may safely try again.", icon: "close-circle", color: "#D94A4A" },
   cancelled: { title: "Payment cancelled", detail: "This test payment was not completed.", icon: "ban", color: "#6E7785" },
 };
@@ -55,6 +56,7 @@ export default function GCashSandboxSheet({
   onConfirm,
   onRefresh,
   onCancel,
+  onComplete,
   onRetry,
   onClose,
 }: Props) {
@@ -62,12 +64,6 @@ export default function GCashSandboxSheet({
   const completed = Boolean(result);
   const copy = statusCopy[status] || statusCopy.pending;
   const reference = result?.sandbox?.mockReference || result?.sandbox?.reference;
-
-  useEffect(() => {
-    if (!visible || status !== "pending" || busy || !onRefresh) return;
-    const timer = setTimeout(onRefresh, 2500);
-    return () => clearTimeout(timer);
-  }, [visible, status, busy, onRefresh]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={() => !busy && onClose()}>
@@ -134,7 +130,26 @@ export default function GCashSandboxSheet({
                 {!!reference && <View style={styles.receiptRow}><Text style={styles.receiptLabel}>Reference</Text><Text numberOfLines={1} style={styles.reference}>{reference}</Text></View>}
                 <View style={styles.receiptRow}><Text style={styles.receiptLabel}>Environment</Text><Text style={styles.sandboxValue}>SANDBOX</Text></View>
               </View>
-              {status === "pending" && <TouchableOpacity disabled={busy} onPress={onRefresh} style={[styles.payButton, busy && styles.disabled]}>{busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.payText}>Check payment status</Text>}</TouchableOpacity>}
+              {(status === "failed" || status === "cancelled") && (
+                <View style={styles.scenarioBox}>
+                  <Text style={styles.scenarioTitle}>RETRY RESULT</Text>
+                  <Text style={styles.scenarioHint}>Choose the result for the new attempt on this same order.</Text>
+                  <View style={styles.scenarioRow}>
+                    {scenarios.map((item) => (
+                      <TouchableOpacity
+                        key={item.value}
+                        disabled={busy}
+                        onPress={() => onScenarioChange?.(item.value)}
+                        style={[styles.scenarioButton, scenario === item.value && styles.scenarioButtonActive]}
+                      >
+                        <Text style={[styles.scenarioText, scenario === item.value && styles.scenarioTextActive]}>{item.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+              {status === "pending" && <TouchableOpacity disabled={busy} onPress={onComplete} style={[styles.payButton, busy && styles.disabled]}>{busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.payText}>Complete test payment</Text>}</TouchableOpacity>}
+              {status === "pending" && <TouchableOpacity disabled={busy} onPress={onRefresh} style={styles.secondaryButton}><Text style={styles.secondaryText}>Check payment status</Text></TouchableOpacity>}
               {status === "pending" && <TouchableOpacity disabled={busy} onPress={onCancel} style={styles.secondaryButton}><Text style={styles.dangerText}>Cancel test payment</Text></TouchableOpacity>}
               {(status === "failed" || status === "cancelled") && <TouchableOpacity disabled={busy} onPress={onRetry} style={[styles.payButton, busy && styles.disabled]}><Text style={styles.payText}>Try again</Text></TouchableOpacity>}
               {status !== "pending" && <TouchableOpacity disabled={busy} onPress={onClose} style={styles.secondaryButton}><Text style={styles.secondaryText}>Done</Text></TouchableOpacity>}

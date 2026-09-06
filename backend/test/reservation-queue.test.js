@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { reservationIntervalsOverlap } = require('../src/controllers/reservation.controller');
-const { buildReservationQueue } = require('../src/controllers/queue.controller');
+const { activeReservationScheduleWhere, buildReservationQueue } = require('../src/controllers/queue.controller');
 const { hasMinimumWalkInDuration, resolveWalkInExpectedEnd } = require('../src/controllers/table.controller');
 
 test('reservation overlap uses proper interval boundaries', () => {
@@ -20,6 +20,14 @@ test('reservation queue positions are ordered by scheduled start time per table'
   ]);
   assert.deepEqual(schedule.filter((entry) => entry.tableId === 'table-a').map((entry) => [entry.id, entry.position]), [['first', 1], ['second', 2], ['later', 3]]);
   assert.equal(schedule.find((entry) => entry.id === 'other-table').position, 1);
+});
+
+test('TV reservation schedule keeps a started reservation visible until its end time', () => {
+  const now = new Date('2026-09-06T12:00:00+08:00');
+  const where = activeReservationScheduleWhere(now);
+  assert.deepEqual(where.status, { in: ['PENDING', 'APPROVED'] });
+  assert.deepEqual(where.endTime, { gt: now });
+  assert.equal(Object.hasOwn(where, 'startTime'), false);
 });
 
 test('walk-in expected end requires the existing 30-minute minimum and allows a reservation-adjacent end', () => {

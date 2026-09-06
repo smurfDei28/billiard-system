@@ -378,6 +378,19 @@ router.post('/sandbox/gcash/order/payment/:paymentId/cancel', authenticate, play
   }
 });
 
+router.post('/sandbox/gcash/order/payment/:paymentId/complete', authenticate, playerPaymentOnly, async (req, res) => {
+  try {
+    const payment = await prisma.manualPayment.findFirst({ where: { id: req.params.paymentId, userId: req.user.id, purpose: 'ORDER', method: 'GCASH', status: 'PENDING' } });
+    const transactionId = acquireMockId(payment?.referenceNo, payment?.notes);
+    if (!transactionId) return res.status(404).json({ error: 'Pending sandbox order payment was not found.' });
+    const acquirePayment = await acquireMockRequest(`/api/payments/gcash/mock/${encodeURIComponent(transactionId)}/complete`, { method: 'POST' });
+    res.json(await synchronizeSandboxOrderPayment({ paymentId: payment.id, userId: req.user.id, acquirePayment }));
+  } catch (err) {
+    console.error('[AcquireMock Sandbox] Order completion failed', { message: err.message, status: err.status });
+    res.status(err.status || 502).json({ error: err.status ? err.message : 'Could not complete sandbox order payment.' });
+  }
+});
+
 router.get('/sandbox/gcash/:paymentId', authenticate, playerPaymentOnly, async (req, res) => {
   try {
     const payment = await prisma.manualPayment.findFirst({ where: { id: req.params.paymentId, userId: req.user.id, purpose: 'CREDIT_TOPUP', method: 'GCASH' } });
@@ -401,6 +414,19 @@ router.post('/sandbox/gcash/:paymentId/cancel', authenticate, playerPaymentOnly,
   } catch (err) {
     console.error('[AcquireMock Sandbox] Cancellation failed', { message: err.message, status: err.status });
     res.status(err.status || 502).json({ error: err.status ? err.message : 'Could not cancel sandbox payment.' });
+  }
+});
+
+router.post('/sandbox/gcash/:paymentId/complete', authenticate, playerPaymentOnly, async (req, res) => {
+  try {
+    const payment = await prisma.manualPayment.findFirst({ where: { id: req.params.paymentId, userId: req.user.id, purpose: 'CREDIT_TOPUP', method: 'GCASH', status: 'PENDING' } });
+    const transactionId = acquireMockId(payment?.referenceNo, payment?.notes);
+    if (!transactionId) return res.status(404).json({ error: 'Pending sandbox payment was not found.' });
+    const acquirePayment = await acquireMockRequest(`/api/payments/gcash/mock/${encodeURIComponent(transactionId)}/complete`, { method: 'POST' });
+    res.json(await synchronizeSandboxPayment({ paymentId: payment.id, userId: req.user.id, acquirePayment }));
+  } catch (err) {
+    console.error('[AcquireMock Sandbox] Completion failed', { message: err.message, status: err.status });
+    res.status(err.status || 502).json({ error: err.status ? err.message : 'Could not complete sandbox payment.' });
   }
 });
 

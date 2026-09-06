@@ -14,11 +14,6 @@ const defaultScenario = () => {
   return VALID_SCENARIOS.has(configured) ? configured : 'success';
 };
 
-const pendingSeconds = () => {
-  const configured = Number(process.env.GCASH_SANDBOX_PENDING_SECONDS || 10);
-  return Number.isFinite(configured) && configured >= 0 ? configured : 10;
-};
-
 const statusForScenario = (scenario) => ({
   success: 'paid',
   failed: 'failed',
@@ -35,13 +30,9 @@ const scenarioForStatus = (status) => ({
 
 const statusFromNotes = (notes) => String(notes || '').match(/status=(paid|failed|pending|cancelled)/i)?.[1]?.toLowerCase() || 'pending';
 const scenarioFromNotes = (notes) => String(notes || '').match(/scenario=(success|failed|pending|cancelled)/i)?.[1]?.toLowerCase() || scenarioForStatus(statusFromNotes(notes));
-const resolvedStatus = (payment) => {
-  const scenario = scenarioFromNotes(payment.notes);
-  const storedStatus = statusFromNotes(payment.notes);
-  if (storedStatus !== 'pending' || scenario !== 'pending') return storedStatus;
-  const ageSeconds = (Date.now() - new Date(payment.createdAt).getTime()) / 1000;
-  return ageSeconds >= pendingSeconds() ? 'paid' : 'pending';
-};
+// Refreshing is read-only: a pending sandbox payment stays pending until the
+// tester explicitly completes or cancels it.
+const resolvedStatus = (payment) => statusFromNotes(payment.notes);
 
 const response = ({ id, amount, reference, scenario, status }) => ({
   id,
@@ -106,6 +97,19 @@ const cancelPayment = async (id) => {
   });
 };
 
+const completePayment = async (id) => {
+  const payment = await findPayment(id);
+  const status = resolvedStatus(payment);
+  if (status !== 'pending') throw Object.assign(new Error('This sandbox payment has already been processed.'), { status: 409 });
+  return response({
+    id,
+    amount: Math.round(Number(payment.amount) * 100),
+    reference: payment.referenceNo,
+    scenario: 'success',
+    status: 'paid',
+  });
+};
+
 const request = async (pathname, options = {}) => {
   if (!enabled()) throw Object.assign(new Error('GCash sandbox is disabled.'), { status: 503 });
   const method = String(options.method || 'GET').toUpperCase();
@@ -114,12 +118,13 @@ const request = async (pathname, options = {}) => {
     try { body = JSON.parse(options.body || '{}'); } catch { body = {}; }
     return createPayment(body);
   }
-  const match = pathname.match(/^\/api\/payments\/gcash\/mock\/([^/]+)(\/cancel)?$/);
+  const match = pathname.match(/^\/api\/payments\/gcash\/mock\/([^/]+)(\/(?:cancel|complete))?$/);
   if (!match) throw Object.assign(new Error('GCash sandbox route was not found.'), { status: 404 });
   const id = decodeURIComponent(match[1]);
-  if (match[2] && method === 'POST') return cancelPayment(id);
+  if (match[2] === '/cancel' && method === 'POST') return cancelPayment(id);
+  if (match[2] === '/complete' && method === 'POST') return completePayment(id);
   if (!match[2] && method === 'GET') return readPayment(id);
   throw Object.assign(new Error('GCash sandbox method is not supported.'), { status: 405 });
 };
 
-module.exports = { enabled, request, _test: { defaultScenario, pendingSeconds, statusForScenario, statusFromNotes, scenarioFromNotes, resolvedStatus } };
+module.exports = { enabled, request, _test: { defaultScenario, statusForScenario, statusFromNotes, scenarioFromNotes, resolvedStatus } };

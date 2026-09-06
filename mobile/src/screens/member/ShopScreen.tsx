@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Modal,
   ScrollView,
   StyleSheet,
@@ -13,13 +14,24 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../context/AuthContext";
-import { COLORS } from "../../constants";
+import { API_URL, COLORS } from "../../constants";
 import { formatCredits, normalizeCreditBalance } from "../../utils/credits";
 import GCashSandboxSheet, { SandboxScenario } from "../../components/GCashSandboxSheet";
 
 const pretty = (v: string) =>
   v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const key = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const categoryImages: Record<string, any> = {
+  RICE_MEAL: require("../../../assets/products/rice-meal.jpg"),
+  DRINKS: require("../../../assets/products/drinks.jpg"),
+  ALCOHOLIC_BEVERAGES: require("../../../assets/products/alcoholic-beverages.jpg"),
+  COFFEE: require("../../../assets/products/coffee.jpg"),
+  BILLIARD_EQUIPMENT: require("../../../assets/products/billiard-equipment.jpg"),
+  SNACKS: require("../../../assets/products/snacks.jpg"),
+};
+const productImage = (product: any) => product.imageUrl
+  ? { uri: /^https?:\/\//i.test(product.imageUrl) ? product.imageUrl : `${API_URL}${product.imageUrl}` }
+  : categoryImages[product.category] || categoryImages.SNACKS;
 export default function ShopScreen({ navigation }: any) {
   const [products, setProducts] = useState<any[]>([]),
     [cart, setCart] = useState<Record<string, number>>({}),
@@ -162,6 +174,17 @@ export default function ShopScreen({ navigation }: any) {
       Alert.alert("Could not cancel payment", e.response?.data?.error || "Please check your connection and try again.");
     } finally { setBusy(false); }
   };
+  const completeSandboxOrder = async () => {
+    if (!sandboxOrderPayment?.payment?.id || busy) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/api/payments/sandbox/gcash/order/payment/${encodeURIComponent(sandboxOrderPayment.payment.id)}/complete`);
+      setSandboxOrderPayment(data);
+      load();
+    } catch (e: any) {
+      Alert.alert("Could not complete payment", e.response?.data?.error || "Please check your connection and try again.");
+    } finally { setBusy(false); }
+  };
   const retrySandboxOrder = async () => {
     if (!sandboxOrderPayment?.order?.id || busy) return;
     setBusy(true);
@@ -275,34 +298,40 @@ export default function ShopScreen({ navigation }: any) {
           const out = item.stock <= 0;
           return (
             <View style={s.card}>
-              <Text style={s.name}>{item.name}</Text>
-              <Text style={s.meta}>{pretty(item.category)}</Text>
-              <Text style={s.price}>₱{Number(item.price).toFixed(2)}</Text>
-              <Text
-                style={[
-                  s.stock,
-                  {
-                    color: out
-                      ? COLORS.error
+              <Image source={productImage(item)} style={s.productImage} resizeMode="cover" />
+              <View style={s.productInfo}>
+                <Text style={s.name} numberOfLines={2}>{item.name}</Text>
+                <Text style={s.meta} numberOfLines={1}>{pretty(item.category)}</Text>
+                <Text style={s.price}>₱{Number(item.price).toFixed(2)}</Text>
+                <View style={s.productFooter}>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      s.stock,
+                      {
+                        color: out
+                          ? COLORS.error
+                          : item.stock <= item.lowStockAt
+                            ? COLORS.warning
+                            : COLORS.success,
+                      },
+                    ]}
+                  >
+                    {out
+                      ? "Out of stock"
                       : item.stock <= item.lowStockAt
-                        ? COLORS.warning
-                        : COLORS.success,
-                  },
-                ]}
-              >
-                {out
-                  ? "Out of stock"
-                  : item.stock <= item.lowStockAt
-                    ? "Low stock"
-                    : "Available"}
-              </Text>
-              <TouchableOpacity
-                disabled={out}
-                onPress={() => add(item.id)}
-                style={[s.add, out && { opacity: 0.4 }]}
-              >
-                <Text style={s.addTxt}>Add</Text>
-              </TouchableOpacity>
+                        ? "Low stock"
+                        : "Available"}
+                  </Text>
+                  <TouchableOpacity
+                    disabled={out}
+                    onPress={() => add(item.id)}
+                    style={[s.add, out && { opacity: 0.4 }]}
+                  >
+                    <Text style={s.addTxt}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
           );
         }}
@@ -410,6 +439,7 @@ export default function ShopScreen({ navigation }: any) {
         onConfirm={() => place(true)}
         onRefresh={refreshSandboxOrder}
         onCancel={cancelSandboxOrder}
+        onComplete={completeSandboxOrder}
         onRetry={retrySandboxOrder}
         onClose={() => {
           const paid = sandboxOrderPayment?.sandbox?.status === "paid";
@@ -511,18 +541,22 @@ const s = StyleSheet.create({
   card: {
     backgroundColor: COLORS.surface,
     borderRadius: 14,
-    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.surfaceBorder,
-    gap: 5,
+    overflow: "hidden",
+    flexDirection: "row",
+    minHeight: 126,
   },
-  name: { color: COLORS.textPrimary, fontWeight: "800", fontSize: 15 },
+  productImage: { width: 116, minHeight: 124, backgroundColor: COLORS.surfaceLight },
+  productInfo: { flex: 1, minWidth: 0, padding: 12, gap: 4 },
+  productFooter: { marginTop: "auto", flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  name: { color: COLORS.textPrimary, fontWeight: "800", fontSize: 15, flexShrink: 1 },
   meta: { color: COLORS.textMuted, fontSize: 11 },
   price: { color: COLORS.primary, fontWeight: "800", fontSize: 16 },
-  stock: { fontSize: 11, fontWeight: "700" },
+  stock: { flex: 1, minWidth: 0, fontSize: 11, fontWeight: "700" },
   add: {
     backgroundColor: COLORS.primary,
-    alignSelf: "flex-start",
+    flexShrink: 0,
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 9,
