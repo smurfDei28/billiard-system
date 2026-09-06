@@ -75,15 +75,16 @@ export default function ManualPaymentScreen({ route }: any) {
   const [sandboxRestoreError, setSandboxRestoreError] = useState("");
   const [sandboxCheckoutOpen, setSandboxCheckoutOpen] = useState(false);
   const [showAllPendingShopPayments, setShowAllPendingShopPayments] = useState(false);
-  const isCash = method?.method === "CASH";
-  const isSandbox = method?.method === "ACQUIREMOCK_GCASH_SANDBOX";
   const isOrderPayment = purpose === "ORDER";
   const isCreditTopUp = purpose === "CREDIT_TOPUP";
+  const selectedOrder = orders.find((order: any) => order.id === orderId);
+  const usesSandboxCheckout = isCreditTopUp || (isOrderPayment && selectedOrder?.paymentMethod === "GCASH" && sandboxEnabled);
+  const isSandbox = usesSandboxCheckout && sandboxEnabled;
+  const isCash = method?.method === "CASH";
   const sandboxPaymentOrderId = sandboxPayment?.order?.id || sandboxPayment?.payment?.orderId;
   const hasRestoredSandboxOrderPayment = isOrderPayment
     && sandboxPaymentOrderId === orderId
     && normalizeSandboxStatus(sandboxPayment?.sandbox?.status) === "pending";
-  const selectedOrder = orders.find((order: any) => order.id === orderId);
   const pendingShopPayments = orders.filter(
     (order: any) =>
       order.source === "MEMBER_SHOP" &&
@@ -111,19 +112,24 @@ export default function ManualPaymentScreen({ route }: any) {
         ],
       );
       setMethods(methodsRes.data || []);
-      setSandboxEnabled(Boolean(sandboxConfigRes.data?.enabled));
+      const sandboxIsEnabled = Boolean(sandboxConfigRes.data?.enabled);
+      setSandboxEnabled(sandboxIsEnabled);
       const availableMethods = (methodsRes.data || []).filter(
         (item: any) =>
           requestedPurpose !== "CREDIT_TOPUP" && item.method !== "CASH",
       );
-      setMethod(
-        (current: any) =>
-          availableMethods.find(
-            (item: any) => item.method === current?.method,
-          ) ||
-          availableMethods[0] ||
-          null,
-      );
+      if (requestedPurpose === "CREDIT_TOPUP") {
+        setMethod(sandboxIsEnabled ? { method: "ACQUIREMOCK_GCASH_SANDBOX", businessName: "GCash Sandbox / Mock" } : null);
+      } else {
+        setMethod(
+          (current: any) =>
+            availableMethods.find(
+              (item: any) => item.method === current?.method,
+            ) ||
+            availableMethods[0] ||
+            null,
+        );
+      }
       setHistory(historyRes.data || []);
       setOrders(
         (ordersRes.data || []).filter(
@@ -668,50 +674,33 @@ export default function ManualPaymentScreen({ route }: any) {
         )}
         <View style={s.card}>
           <Text style={s.sectionTitle}>{isSandbox ? "Payment method" : "2. Choose a payment method"}</Text>
-          <View style={s.row}>
-            {methods
-              .filter((item) => {
-                if (isOrderPayment) {
-                  return item.method === selectedOrder?.paymentMethod && !(sandboxEnabled && selectedOrder?.paymentMethod === "GCASH");
-                }
-                return !isCreditTopUp && item.method !== "CASH";
-              })
-              .map((item) => (
-                <TouchableOpacity
-                  key={item.method}
-                  onPress={() => setMethod(item)}
-                  style={[
-                    s.choice,
-                    method?.method === item.method && s.choiceActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      s.choiceText,
-                      method?.method === item.method && s.choiceTextActive,
-                    ]}
-                  >
-                    {methodLabel(item.method)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            {(isCreditTopUp || (isOrderPayment && selectedOrder?.paymentMethod === "GCASH")) && sandboxEnabled && (
-              <TouchableOpacity
-                onPress={() => setMethod({ method: "ACQUIREMOCK_GCASH_SANDBOX", businessName: "GCash Sandbox / Mock" })}
-                style={[s.choice, method?.method === "ACQUIREMOCK_GCASH_SANDBOX" && s.choiceActive]}
-              >
-                <Text style={[s.choiceText, method?.method === "ACQUIREMOCK_GCASH_SANDBOX" && s.choiceTextActive]}>GCash Sandbox / Mock</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          {method && (
+          {isSandbox ? (
+            <View style={s.fixedSandboxMethod}>
+              <Ionicons name="wallet-outline" size={22} color={COLORS.primary} />
+              <View style={s.fixedSandboxCopy}>
+                <Text style={s.sandboxTitle}>GCash Sandbox / Mock</Text>
+                <Text style={s.fixedSandboxDetail}>Development testing only. No real GCash transaction will occur.</Text>
+              </View>
+              <Ionicons name="checkmark-circle" size={21} color={COLORS.primary} />
+            </View>
+          ) : (
+            <View style={s.row}>
+              {methods
+                .filter((item) => {
+                  if (isOrderPayment) return item.method === selectedOrder?.paymentMethod;
+                  return !isCreditTopUp && item.method !== "CASH";
+                })
+                .map((item) => (
+                  <TouchableOpacity key={item.method} onPress={() => setMethod(item)} style={[s.choice, method?.method === item.method && s.choiceActive]}>
+                    <Text style={[s.choiceText, method?.method === item.method && s.choiceTextActive]}>{methodLabel(item.method)}</Text>
+                  </TouchableOpacity>
+                ))}
+            </View>
+          )}
+          {isCreditTopUp && !sandboxEnabled && <Text style={s.warning}>The GCash sandbox is temporarily unavailable.</Text>}
+          {method && !isSandbox && (
             <View style={s.details}>
-              {isSandbox ? (
-                <View style={s.sandboxNotice}>
-                  <Text style={s.sandboxTitle}>GCash Sandbox / Mock</Text>
-                  <Text style={s.instructions}>Development testing only. No real GCash transaction will occur.</Text>
-                </View>
-              ) : isCash ? (
+              {isCash ? (
                 <>
                   <Ionicons
                     name="cash-outline"
@@ -784,7 +773,7 @@ export default function ManualPaymentScreen({ route }: any) {
           )}
           {isSandbox ? (
             <Text style={s.sandboxLabel}>Payment result is confirmed automatically by the payment service.</Text>
-          ) : !isCash && (
+          ) : !isCreditTopUp && !isCash && (
             <>
               <TextInput
                 value={referenceNo}
@@ -843,7 +832,7 @@ export default function ManualPaymentScreen({ route }: any) {
             placeholderTextColor={COLORS.textMuted}
             style={s.input}
           />
-          {!hasRestoredSandboxOrderPayment && <TouchableOpacity
+          {(!isCreditTopUp || isSandbox) && !hasRestoredSandboxOrderPayment && <TouchableOpacity
             disabled={submitting || sandboxBusy}
             onPress={submit}
             style={[s.submit, (submitting || sandboxBusy) && { opacity: 0.6 }]}
@@ -1214,6 +1203,9 @@ const s = StyleSheet.create({
   disabled: { opacity: 0.6 },
   sandboxNotice: { alignItems: "center", gap: 6, paddingVertical: 4 },
   sandboxTitle: { color: COLORS.primary, fontSize: 16, fontWeight: "800", textAlign: "center" },
+  fixedSandboxMethod: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 11, borderRadius: 12, borderWidth: 1, borderColor: COLORS.primary + "66", backgroundColor: COLORS.primary + "10", paddingHorizontal: 13, paddingVertical: 10 },
+  fixedSandboxCopy: { flex: 1, minWidth: 0 },
+  fixedSandboxDetail: { color: COLORS.textSecondary, fontSize: 11, marginTop: 2 },
   sandboxLabel: { color: COLORS.textSecondary, fontSize: 12, fontWeight: "700" },
   sandboxControls: { gap: 8 },
   sandboxResult: { borderColor: COLORS.primary + "88" },

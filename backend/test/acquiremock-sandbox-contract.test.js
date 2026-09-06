@@ -159,6 +159,15 @@ test('member shop exposes Cash, Credits, and the provider-controlled GCash sandb
   assert.doesNotMatch(shopMobileSource, /navigation\.navigate\("Payments", \{ orderId/);
 });
 
+test('credit top-up exposes one fixed sandbox method and never flashes the retired manual proof form', () => {
+  assert.match(mobileSource, /const usesSandboxCheckout = isCreditTopUp \|\|/);
+  assert.match(mobileSource, /if \(requestedPurpose === "CREDIT_TOPUP"\) \{[\s\S]*setMethod\(sandboxIsEnabled \? \{ method: "ACQUIREMOCK_GCASH_SANDBOX"/);
+  assert.match(mobileSource, /<View style=\{s\.fixedSandboxMethod\}>/);
+  assert.doesNotMatch(mobileSource, /onPress=\{\(\) => setMethod\(\{ method: "ACQUIREMOCK_GCASH_SANDBOX"/);
+  assert.match(mobileSource, /!isCreditTopUp && !isCash && \(/);
+  assert.match(mobileSource, /\(!isCreditTopUp \|\| isSandbox\) && !hasRestoredSandboxOrderPayment/);
+});
+
 test('staff and admin show sandbox records as transaction history without manual controls', () => {
   assert.match(staffMobileSource, /isAcquireMockSandbox/);
   assert.match(staffMobileSource, /AcquireMock Sandbox/);
