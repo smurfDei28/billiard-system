@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,20 +23,42 @@ export default function StaffTournamentOperationsScreen() {
   const [pickerMode, setPickerMode] = useState<'date' | 'time' | null>(null);
   const [scoreOne, setScoreOne] = useState('');
   const [scoreTwo, setScoreTwo] = useState('');
+  const loadInFlight = useRef<Promise<void> | null>(null);
 
   const load = useCallback(async () => {
-    try {
-      const [tournaments, tableResult] = await Promise.all([api.get('/api/tournaments'), api.get('/api/tables')]);
-      const details = await Promise.all((tournaments.data || []).filter(Boolean).map((t: any) => api.get(`/api/tournaments/${t.id}`)));
-      setMatches(details.flatMap((result: any) => (result.data.matches || []).filter(Boolean).map((match: any) => ({
-        ...match,
-        tournament: result.data,
-        player1: result.data.entries?.find((entry: any) => entry.userId === match.player1Id)?.user,
-        player2: result.data.entries?.find((entry: any) => entry.userId === match.player2Id)?.user,
-      }))));
-      setTables(tableResult.data);
-    } catch { Alert.alert('Tournament Matches', 'Could not load tournament operations.'); }
-    finally { setLoading(false); }
+    // A match mutation emits a socket event before its HTTP response returns.
+    // Reuse an active refresh so the socket listener and action handler cannot
+    // flood the small production database pool with identical detail requests.
+    if (loadInFlight.current) return loadInFlight.current;
+
+    const request = (async () => {
+      try {
+        const [tournaments, tableResult] = await Promise.all([api.get('/api/tournaments'), api.get('/api/tables')]);
+        const operational = (tournaments.data || []).filter((t: any) => t && ['REGISTRATION_CLOSED', 'IN_PROGRESS'].includes(t.status));
+        const details: any[] = [];
+        // Tournament details are intentionally loaded in sequence. Loading every
+        // historical bracket concurrently exhausted Railway's three connections.
+        for (const tournament of operational) details.push(await api.get(`/api/tournaments/${tournament.id}`));
+        setMatches(details.flatMap((result: any) => (result.data.matches || []).filter(Boolean).map((match: any) => ({
+          ...match,
+          tournament: result.data,
+          player1: result.data.entries?.find((entry: any) => entry.userId === match.player1Id)?.user,
+          player2: result.data.entries?.find((entry: any) => entry.userId === match.player2Id)?.user,
+        }))));
+        setTables(tableResult.data);
+      } catch (error: any) {
+        const message = error.response?.status === 429
+          ? 'Too many requests were sent. Please wait a moment and refresh.'
+          : error.response?.data?.error || 'Could not load tournament operations.';
+        Alert.alert('Tournament Matches', message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+
+    loadInFlight.current = request;
+    try { await request; }
+    finally { if (loadInFlight.current === request) loadInFlight.current = null; }
   }, []);
 
   useEffect(() => {

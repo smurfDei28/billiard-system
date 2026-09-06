@@ -13,6 +13,13 @@ const { formatLabel, localTime, notifyTournamentUsers, participantName } = requi
 const ACTIVE_ENTRY_STATUSES = ['PENDING_APPROVAL', 'APPROVED', 'CHECKED_IN', 'WINNER'];
 const NEW_TOURNAMENT_REGISTRATION_PAYMENT_METHODS = ['CREDITS', 'CASH'];
 const paidEntryWhere = { paidAt: { not: null } };
+const OPERATION_TRANSACTION_OPTIONS = { maxWait: 10000, timeout: 20000 };
+const sendTournamentOperationError = (res, err, fallback, context) => {
+  console.error(`[Tournament ${context} Error]`, { code: err.code, message: err.message });
+  if (err.code === 'P2024') return res.status(503).json({ error: 'The server is busy. Please wait a moment and try again.' });
+  if (err.code === 'P2034') return res.status(409).json({ error: 'Another match update happened at the same time. Refresh and try again.' });
+  return res.status(err.status || 500).json({ error: err.status ? err.message : fallback });
+};
 const decorateTournament = async (tournament, precomputedCounts = null) => {
   const [activePlayerCount, paidRegistrationCount] = precomputedCounts
     ? [precomputedCounts.activePlayerCount || 0, precomputedCounts.paidRegistrationCount || 0]
@@ -219,7 +226,7 @@ const closeRegistration = async (req, res) => {
 const scheduleMatch = async (req, res) => {
   try {
     const previous = await prisma.tournamentMatch.findUnique({ where: { id: req.params.matchId }, select: { scheduledAt: true } });
-    const result = await prisma.$transaction((db) => scheduleTournamentMatch({ db, matchId: req.params.matchId, scheduledAt: req.body.scheduledAt }));
+    const result = await prisma.$transaction((db) => scheduleTournamentMatch({ db, matchId: req.params.matchId, scheduledAt: req.body.scheduledAt }), OPERATION_TRANSACTION_OPTIONS);
     const { match, table } = await loadTournamentMatchNotificationContext(result.id);
     if (match && (!previous?.scheduledAt || new Date(previous.scheduledAt).getTime() !== new Date(match.scheduledAt).getTime())) {
       const p1 = participantName(match.tournament.entries, match.player1Id);
@@ -231,12 +238,12 @@ const scheduleMatch = async (req, res) => {
     io.to('tv-display').emit('match:updated', result);
     res.json(result);
   }
-  catch (err) { res.status(err.status || 500).json({ error: err.message || 'Failed to schedule match' }); }
+  catch (err) { sendTournamentOperationError(res, err, 'Failed to schedule match', 'Schedule Match'); }
 };
 const assignMatchTable = async (req, res) => {
   try {
     const previous = await prisma.tournamentMatch.findUnique({ where: { id: req.params.matchId }, select: { tableId: true } });
-    const result = await prisma.$transaction((db) => assignTournamentTable({ db, matchId: req.params.matchId, tableId: req.body.tableId }));
+    const result = await prisma.$transaction((db) => assignTournamentTable({ db, matchId: req.params.matchId, tableId: req.body.tableId }), OPERATION_TRANSACTION_OPTIONS);
     const { match, table } = await loadTournamentMatchNotificationContext(result.id);
     if (match && previous?.tableId !== match.tableId) await notifyTournamentUsers({ db: prisma, userIds: [match.player1Id, match.player2Id], title: 'Tournament Table Assigned', message: `${match.tournament.name}: your match is assigned to Table ${table?.tableNumber || 'TBD'}. Race To ${match.tournament.raceTo}.`, data: { tournamentId: match.tournamentId, matchId: match.id, tableId: match.tableId } });
     const io = req.app.get('io');
@@ -244,13 +251,13 @@ const assignMatchTable = async (req, res) => {
     io.to('tv-display').emit('match:updated', result);
     res.json(result);
   }
-  catch (err) { res.status(err.status || 500).json({ error: err.message || 'Failed to assign table' }); }
+  catch (err) { sendTournamentOperationError(res, err, 'Failed to assign table', 'Assign Table'); }
 };
 const setupMatch = async (req, res) => {
   try {
     const result = await prisma.$transaction(
       (db) => setupTournamentMatch({ db, matchId: req.params.matchId, tableId: req.body.tableId, scheduledAt: req.body.scheduledAt }),
-      { isolationLevel: 'Serializable' },
+      { ...OPERATION_TRANSACTION_OPTIONS, isolationLevel: 'Serializable' },
     );
     const { match, table } = await loadTournamentMatchNotificationContext(result.id);
     if (match) {
@@ -264,12 +271,12 @@ const setupMatch = async (req, res) => {
     res.json(result);
   } catch (err) {
     if (err.code === 'P2002') return res.status(409).json({ error: 'This table already has a match scheduled at that time' });
-    res.status(err.status || 500).json({ error: err.message || 'Failed to save match setup' });
+    sendTournamentOperationError(res, err, 'Failed to save match setup', 'Match Setup');
   }
 };
 const startMatch = async (req, res) => {
   try {
-    const result = await prisma.$transaction((db) => startTournamentMatch({ db, matchId: req.params.matchId }));
+    const result = await prisma.$transaction((db) => startTournamentMatch({ db, matchId: req.params.matchId }), OPERATION_TRANSACTION_OPTIONS);
     const io = req.app.get('io');
     if (!result.alreadyStarted) {
       const { match, table } = await loadTournamentMatchNotificationContext(result.match.id);
@@ -280,7 +287,7 @@ const startMatch = async (req, res) => {
       io.to('tv-display').emit('table:updated', { tableId: result.match.tableId, status: 'OCCUPIED' });
     }
     res.json(result);
-  } catch (err) { res.status(err.status || 500).json({ error: err.message || 'Failed to start match' }); }
+  } catch (err) { sendTournamentOperationError(res, err, 'Failed to start match', 'Start Match'); }
 };
 
 const markPrizePaid = async (req, res) => {
