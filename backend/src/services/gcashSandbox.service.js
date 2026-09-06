@@ -69,7 +69,14 @@ const createPayment = (body = {}) => {
   if (!Number.isInteger(amount) || amount <= 0 || String(body.currency || '').toUpperCase() !== 'PHP') {
     throw Object.assign(new Error('The GCash sandbox payment request is invalid.'), { status: 400 });
   }
-  const scenario = defaultScenario();
+  const requestedScenario = String(body.scenario || '').trim().toLowerCase();
+  if (requestedScenario && !VALID_SCENARIOS.has(requestedScenario)) {
+    throw Object.assign(new Error('Choose a valid GCash sandbox scenario.'), { status: 400 });
+  }
+  // The scenario override exists only inside this explicitly-enabled fake
+  // provider. It lets acceptance testers exercise every terminal state without
+  // changing Railway variables between payments.
+  const scenario = requestedScenario || defaultScenario();
   return response({
     id: randomUUID(),
     amount,

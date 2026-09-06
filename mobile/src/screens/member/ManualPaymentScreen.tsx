@@ -17,7 +17,7 @@ import * as MediaLibrary from "expo-media-library";
 import { Ionicons } from "@expo/vector-icons";
 import { api, getAccessToken, useAuth } from "../../context/AuthContext";
 import { API_URL, COLORS } from "../../constants";
-import GCashSandboxSheet from "../../components/GCashSandboxSheet";
+import GCashSandboxSheet, { SandboxScenario } from "../../components/GCashSandboxSheet";
 
 const label = (value: string) =>
   value === "CREDIT_TOPUP"
@@ -70,6 +70,7 @@ export default function ManualPaymentScreen({ route }: any) {
   const [qrLoading, setQrLoading] = useState(false);
   const [sandboxEnabled, setSandboxEnabled] = useState(false);
   const [sandboxPayment, setSandboxPayment] = useState<any>(null);
+  const [sandboxScenario, setSandboxScenario] = useState<SandboxScenario>("success");
   const [sandboxBusy, setSandboxBusy] = useState(false);
   const [sandboxRestoreError, setSandboxRestoreError] = useState("");
   const [sandboxCheckoutOpen, setSandboxCheckoutOpen] = useState(false);
@@ -231,12 +232,12 @@ export default function ManualPaymentScreen({ route }: any) {
     try {
       if (isOrderPayment) {
         if (!orderId || !selectedOrder) return Alert.alert("Order unavailable", "Return to My Orders and try again.");
-        const { data } = await api.post(`/api/payments/sandbox/gcash/order/${encodeURIComponent(orderId)}`);
+        const { data } = await api.post(`/api/payments/sandbox/gcash/order/${encodeURIComponent(orderId)}`, { scenario: sandboxScenario });
         await applySandboxResult(data);
         return;
       }
       if (!Number.isInteger(Number(topUpAmount)) || Number(topUpAmount) <= 0) return Alert.alert("Invalid credits", "Enter a whole number of credits greater than zero.");
-      const { data } = await api.post("/api/payments/sandbox/gcash", { amount: Number(topUpAmount) });
+      const { data } = await api.post("/api/payments/sandbox/gcash", { amount: Number(topUpAmount), scenario: sandboxScenario });
       await applySandboxResult(data);
     } catch (err: any) {
       Alert.alert("Sandbox payment failed", err.response?.data?.error || "Could not reach the development sandbox.");
@@ -280,6 +281,19 @@ export default function ManualPaymentScreen({ route }: any) {
   const startNewSandboxTransaction = () => {
     setSandboxPayment(null);
     setSandboxRestoreError("");
+  };
+
+  const closeSandboxCheckout = () => {
+    const status = normalizeSandboxStatus(sandboxPayment?.sandbox?.status);
+    setSandboxCheckoutOpen(false);
+    // A finished top-up is a receipt, not the next checkout. Clearing it here
+    // ensures a new amount always creates a new provider transaction. Pending
+    // attempts stay restorable so the member can refresh or cancel them.
+    if (isCreditTopUp && status && status !== "pending") {
+      setSandboxPayment(null);
+      setSandboxRestoreError("");
+      setSandboxScenario("success");
+    }
   };
 
   const submit = async () => {
@@ -849,11 +863,13 @@ export default function ManualPaymentScreen({ route }: any) {
         result={sandboxPayment}
         error={sandboxRestoreError}
         busy={sandboxBusy}
+        scenario={sandboxScenario}
+        onScenarioChange={setSandboxScenario}
         onConfirm={submitSandbox}
         onRefresh={refreshSandbox}
         onCancel={cancelSandbox}
         onRetry={startNewSandboxTransaction}
-        onClose={() => setSandboxCheckoutOpen(false)}
+        onClose={closeSandboxCheckout}
       />
       <Modal
         visible={!!qrViewerMethod}

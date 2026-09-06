@@ -15,7 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "../../context/AuthContext";
 import { COLORS } from "../../constants";
 import { formatCredits, normalizeCreditBalance } from "../../utils/credits";
-import GCashSandboxSheet from "../../components/GCashSandboxSheet";
+import GCashSandboxSheet, { SandboxScenario } from "../../components/GCashSandboxSheet";
 
 const pretty = (v: string) =>
   v.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -34,6 +34,7 @@ export default function ShopScreen({ navigation }: any) {
     [attempt, setAttempt] = useState(key()),
     [sandboxEnabled, setSandboxEnabled] = useState(false),
     [sandboxOrderPayment, setSandboxOrderPayment] = useState<any>(null),
+    [sandboxScenario, setSandboxScenario] = useState<SandboxScenario>("success"),
     [gcashCheckoutOpen, setGcashCheckoutOpen] = useState(false);
   const load = useCallback(async () => {
     try {
@@ -115,7 +116,7 @@ export default function ShopScreen({ navigation }: any) {
       });
       const order = r.data.order || r.data;
       if (method === "GCASH") {
-        const { data } = await api.post(`/api/payments/sandbox/gcash/order/${encodeURIComponent(order.id)}`);
+        const { data } = await api.post(`/api/payments/sandbox/gcash/order/${encodeURIComponent(order.id)}`, { scenario: sandboxScenario });
         setSandboxOrderPayment(data);
       }
       setCart({});
@@ -165,7 +166,7 @@ export default function ShopScreen({ navigation }: any) {
     if (!sandboxOrderPayment?.order?.id || busy) return;
     setBusy(true);
     try {
-      const { data } = await api.post(`/api/payments/sandbox/gcash/order/${encodeURIComponent(sandboxOrderPayment.order.id)}`);
+      const { data } = await api.post(`/api/payments/sandbox/gcash/order/${encodeURIComponent(sandboxOrderPayment.order.id)}`, { scenario: sandboxScenario });
       setSandboxOrderPayment(data);
       load();
     } catch (e: any) {
@@ -404,6 +405,8 @@ export default function ShopScreen({ navigation }: any) {
         description="Saturday Nights Shop Order"
         result={sandboxOrderPayment}
         busy={busy}
+        scenario={sandboxScenario}
+        onScenarioChange={setSandboxScenario}
         onConfirm={() => place(true)}
         onRefresh={refreshSandboxOrder}
         onCancel={cancelSandboxOrder}
@@ -412,6 +415,7 @@ export default function ShopScreen({ navigation }: any) {
           const paid = sandboxOrderPayment?.sandbox?.status === "paid";
           setGcashCheckoutOpen(false);
           setSandboxOrderPayment(null);
+          setSandboxScenario("success");
           if (paid) navigation.navigate("Orders");
         }}
       />

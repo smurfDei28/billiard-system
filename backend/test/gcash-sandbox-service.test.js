@@ -59,6 +59,34 @@ test('configured failure and pending scenarios produce provider-like states', as
   assert.equal(pending.status, 'pending');
 });
 
+test('each new sandbox payment can explicitly choose every test result', async () => {
+  process.env.GCASH_SANDBOX_ENABLED = 'true';
+  process.env.GCASH_SANDBOX_DEFAULT_SCENARIO = 'success';
+  const expectedStatuses = {
+    success: 'paid',
+    failed: 'failed',
+    pending: 'pending',
+    cancelled: 'cancelled',
+  };
+
+  for (const [scenario, expectedStatus] of Object.entries(expectedStatuses)) {
+    const result = await sandbox.request('/api/payments/gcash/mock', {
+      method: 'POST',
+      body: JSON.stringify({ amount: 20000, currency: 'PHP', reference: `TEST-${scenario}`, scenario }),
+    });
+    assert.equal(result.scenario, scenario);
+    assert.equal(result.status, expectedStatus);
+  }
+
+  await assert.rejects(
+    sandbox.request('/api/payments/gcash/mock', {
+      method: 'POST',
+      body: JSON.stringify({ amount: 20000, currency: 'PHP', reference: 'TEST-BAD', scenario: 'maybe' }),
+    }),
+    (error) => error.status === 400,
+  );
+});
+
 test('pending records automatically resolve after the configured delay', () => {
   process.env.GCASH_SANDBOX_PENDING_SECONDS = '10';
   const recent = { notes: 'GCASH SANDBOX | scenario=pending | status=pending', createdAt: new Date() };

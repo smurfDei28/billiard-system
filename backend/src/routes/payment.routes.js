@@ -303,7 +303,7 @@ router.post('/sandbox/gcash', authenticate, playerPaymentOnly, async (req, res) 
     const reference = `IBHMS-SANDBOX-${randomUUID()}`;
     const acquirePayment = await acquireMockRequest('/api/payments/gcash/mock', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: amount * 100, currency: 'PHP', reference, idempotencyKey: `ibhms-sandbox-${req.user.id}-${randomUUID()}` }),
+      body: JSON.stringify({ amount: amount * 100, currency: 'PHP', reference, scenario: req.body?.scenario, idempotencyKey: `ibhms-sandbox-${req.user.id}-${randomUUID()}` }),
     });
     if (!acquirePayment?.id || !['paid', 'failed', 'pending', 'cancelled'].includes(acquirePayment.status)) throw Object.assign(new Error('AcquireMock returned an invalid payment response.'), { status: 502 });
     const payment = await prisma.manualPayment.create({ data: {
@@ -332,7 +332,7 @@ router.post('/sandbox/gcash/order/:orderId', authenticate, playerPaymentOnly, as
 
     const acquirePayment = await acquireMockRequest('/api/payments/gcash/mock', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: Math.round(order.total * 100), currency: 'PHP', reference: `IBHMS-SHOP-${order.id}`, idempotencyKey: `ibhms-sandbox-order-${order.id}-${randomUUID()}` }),
+      body: JSON.stringify({ amount: Math.round(order.total * 100), currency: 'PHP', reference: `IBHMS-SHOP-${order.id}`, scenario: req.body?.scenario, idempotencyKey: `ibhms-sandbox-order-${order.id}-${randomUUID()}` }),
     });
     if (!acquirePayment?.id || !['paid', 'failed', 'pending', 'cancelled'].includes(acquirePayment.status)) throw Object.assign(new Error('AcquireMock returned an invalid payment response.'), { status: 502 });
     try {

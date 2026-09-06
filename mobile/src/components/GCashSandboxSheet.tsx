@@ -17,12 +17,23 @@ type Props = {
   result?: any;
   error?: string;
   busy?: boolean;
+  scenario?: SandboxScenario;
+  onScenarioChange?: (scenario: SandboxScenario) => void;
   onConfirm: () => void;
   onRefresh?: () => void;
   onCancel?: () => void;
   onRetry?: () => void;
   onClose: () => void;
 };
+
+export type SandboxScenario = "success" | "failed" | "pending" | "cancelled";
+
+const scenarios: Array<{ value: SandboxScenario; label: string }> = [
+  { value: "success", label: "Success" },
+  { value: "failed", label: "Failed" },
+  { value: "pending", label: "Pending" },
+  { value: "cancelled", label: "Cancelled" },
+];
 
 const BLUE = "#0878F9";
 const statusCopy: Record<string, { title: string; detail: string; icon: any; color: string }> = {
@@ -39,6 +50,8 @@ export default function GCashSandboxSheet({
   result,
   error,
   busy = false,
+  scenario = "success",
+  onScenarioChange,
   onConfirm,
   onRefresh,
   onCancel,
@@ -88,6 +101,22 @@ export default function GCashSandboxSheet({
                 <Text style={styles.testBalance}>Sandbox balance</Text>
               </View>
               <Text style={styles.notice}>This screen simulates an e-wallet checkout. It will never request a real mobile number, MPIN, OTP, or account credential.</Text>
+              <View style={styles.scenarioBox}>
+                <Text style={styles.scenarioTitle}>TEST RESULT</Text>
+                <Text style={styles.scenarioHint}>Choose the result returned by this new sandbox payment.</Text>
+                <View style={styles.scenarioRow}>
+                  {scenarios.map((item) => (
+                    <TouchableOpacity
+                      key={item.value}
+                      disabled={busy}
+                      onPress={() => onScenarioChange?.(item.value)}
+                      style={[styles.scenarioButton, scenario === item.value && styles.scenarioButtonActive]}
+                    >
+                      <Text style={[styles.scenarioText, scenario === item.value && styles.scenarioTextActive]}>{item.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
               <TouchableOpacity disabled={busy || amount <= 0} onPress={onConfirm} style={[styles.payButton, (busy || amount <= 0) && styles.disabled]}>
                 {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.payText}>Pay ₱{Number(amount || 0).toFixed(2)}</Text>}
               </TouchableOpacity>
@@ -140,6 +169,14 @@ const styles = StyleSheet.create({
   accountNumber: { color: "#172033", fontWeight: "800", marginTop: 2 },
   testBalance: { color: BLUE, fontSize: 10, fontWeight: "800" },
   notice: { color: "#697688", fontSize: 11, lineHeight: 16, textAlign: "center" },
+  scenarioBox: { backgroundColor: "#F7F9FC", borderRadius: 14, borderWidth: 1, borderColor: "#E6EBF2", padding: 12, gap: 7 },
+  scenarioTitle: { color: "#697688", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  scenarioHint: { color: "#697688", fontSize: 11 },
+  scenarioRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  scenarioButton: { minWidth: "47%", flexGrow: 1, borderRadius: 9, borderWidth: 1, borderColor: "#CED7E3", paddingVertical: 9, paddingHorizontal: 10, alignItems: "center" },
+  scenarioButtonActive: { backgroundColor: "#EAF3FF", borderColor: BLUE },
+  scenarioText: { color: "#697688", fontSize: 11, fontWeight: "800" },
+  scenarioTextActive: { color: BLUE },
   payButton: { minHeight: 52, borderRadius: 13, backgroundColor: BLUE, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
   payText: { color: "#FFFFFF", fontSize: 15, fontWeight: "900" },
   secondaryButton: { minHeight: 44, alignItems: "center", justifyContent: "center" },

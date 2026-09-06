@@ -21,7 +21,7 @@ test('built-in GCash sandbox is backend-only, gated, and preserves the mobile AP
   assert.match(gcashSandboxServiceSource, /GCASH_SANDBOX_DEFAULT_SCENARIO/);
   assert.doesNotMatch(gcashSandboxServiceSource, /ACQUIREMOCK_BASE_URL/);
   assert.doesNotMatch(gcashSandboxServiceSource, /fetch\(/);
-  assert.match(paymentSource, /amount: amount \* 100, currency: 'PHP', reference, idempotencyKey/);
+  assert.match(paymentSource, /amount: amount \* 100, currency: 'PHP', reference, scenario: req\.body\?\.scenario, idempotencyKey/);
   assert.match(paymentSource, /\/api\/payments\/gcash\/mock/);
   assert.match(paymentSource, /GET.*sandbox\/gcash\/config|router\.get\('\/sandbox\/gcash\/config'/s);
 });
@@ -83,7 +83,7 @@ test('new pending GCash sandbox Shop notifications use a pending label without c
   assert.match(notificationsMobileSource, /navigation\.navigate\('Payments', \{ orderId: order\.id \}\)/);
 });
 
-test('member UI limits sandbox selection to the enabled credit-top-up path and refreshes through IBHMS', () => {
+test('member UI exposes explicit sandbox outcomes and refreshes through IBHMS', () => {
   assert.match(mobileSource, /sandboxEnabled/);
   assert.match(mobileSource, /GCash Sandbox \/ Mock/);
   assert.match(mobileSource, /Development testing only\. No real GCash transaction will occur\./);
@@ -91,9 +91,20 @@ test('member UI limits sandbox selection to the enabled credit-top-up path and r
   assert.match(sandboxSheetSource, /Check payment status/);
   assert.match(sandboxSheetSource, /Try again/);
   assert.match(sandboxSheetSource, /NO REAL MONEY/);
-  assert.doesNotMatch(mobileSource, /Development scenario/);
-  assert.doesNotMatch(mobileSource, /scenario: sandboxScenario/);
+  assert.match(sandboxSheetSource, /Success/);
+  assert.match(sandboxSheetSource, /Failed/);
+  assert.match(sandboxSheetSource, /Pending/);
+  assert.match(sandboxSheetSource, /Cancelled/);
+  assert.match(mobileSource, /scenario: sandboxScenario/);
+  assert.match(shopMobileSource, /scenario: sandboxScenario/);
   assert.doesNotMatch(mobileSource, /\["GCASH", "MAYA"\]\.includes\(item\.method\)/);
+});
+
+test('a completed credit top-up receipt is cleared before the next checkout', () => {
+  assert.match(mobileSource, /const closeSandboxCheckout = \(\) =>/);
+  assert.match(mobileSource, /isCreditTopUp && status && status !== "pending"/);
+  assert.match(mobileSource, /setSandboxPayment\(null\)/);
+  assert.match(mobileSource, /onClose=\{closeSandboxCheckout\}/);
 });
 
 test('shared payment screen sends sandbox orders through the persisted-order endpoint before top-up validation', () => {
