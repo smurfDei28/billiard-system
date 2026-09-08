@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#060a12" />
+    <title>Saturday Nights — TV Display</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="login-view" class="login-view">
+      <form id="login-form" class="login-card" autocomplete="on">
+        <div class="brand-ball" aria-hidden="true">8</div>
+        <p class="eyebrow">DIGITAL SIGNAGE</p>
+        <h1>Saturday Nights</h1>
+        <p class="login-copy">Sign in with a dedicated Staff account to start the read-only TV display.</p>
+        <label>Email<input id="email" name="email" type="email" autocomplete="username" required /></label>
+        <label>Password<input id="password" name="password" type="password" autocomplete="current-password" required /></label>
+        <p id="login-error" class="form-error" role="alert"></p>
+        <button id="login-button" type="submit">Start TV Display</button>
+      </form>
+    </main>
+
+    <main id="dashboard" class="dashboard hidden">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-ball small" aria-hidden="true">8</div>
+          <div><p class="eyebrow">SATURDAY NIGHTS BILLIARD</p><h1>Live Hall Display</h1></div>
+        </div>
+        <div class="clock-wrap">
+          <strong id="clock">--:--</strong>
+          <span id="date">Philippine Time</span>
+        </div>
+        <div class="actions">
+          <span id="connection" class="connection offline">RECONNECTING</span>
+          <button id="fullscreen" class="icon-button" type="button">Fullscreen</button>
+          <button id="logout" class="icon-button muted" type="button">Sign out</button>
+        </div>
+      </header>
+
+      <section class="content">
+        <section class="tables-panel panel">
+          <div class="section-heading"><div><p class="eyebrow">FLOOR STATUS</p><h2>Billiard Tables</h2></div><div id="table-summary" class="summary"></div></div>
+          <div id="tables" class="table-grid"><p class="empty">Loading tables…</p></div>
+        </section>
+
+        <aside class="side-column">
+          <section class="panel reservations-panel">
+            <div class="section-heading"><div><p class="eyebrow">TODAY'S SCHEDULE</p><h2>Reservations</h2></div></div>
+            <div id="reservations" class="reservation-list"><p class="empty">Loading reservations…</p></div>
+          </section>
+          <section class="panel tournament-panel">
+            <div class="section-heading"><div><p class="eyebrow">COMPETITION</p><h2>Tournament</h2></div></div>
+            <div id="tournament"><p class="empty">Loading tournament…</p></div>
+          </section>
+        </aside>
+      </section>
+
+      <footer><span>Welcome to Saturday Nights Billiard</span><span id="last-updated">Waiting for data</span></footer>
+    </main>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
