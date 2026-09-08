@@ -63,7 +63,17 @@ test('Staff can choose or capture an exact photo for new and existing products',
   assert.match(inventorySource, /Use a clear photo of this exact item/);
   assert.match(inventorySource, /launchImageLibraryAsync/);
   assert.match(inventorySource, /launchCameraAsync/);
+  assert.match(inventorySource, /ImageManipulator\.manipulateAsync/);
+  assert.match(inventorySource, /resize: \{ width: 1280 \}/);
+  assert.match(inventorySource, /format: ImageManipulator\.SaveFormat\.JPEG/);
+  assert.match(inventorySource, /mimeType: 'image\/jpeg'/);
   assert.match(inventorySource, /\/api\/products\/\$\{encodeURIComponent\(productId\)\}\/image/);
   assert.match(inventorySource, /if \(!newImage\).*Product photo required/);
   assert.match(inventorySource, /if \(!editingProduct\.imageUrl && !editImage\).*Product photo required/);
+});
+
+test('Staff product editing reports image-only failures without claiming the details were lost', () => {
+  assert.match(inventorySource, /Product details saved/);
+  assert.match(inventorySource, /details were saved, but the photo could not be uploaded/);
+  assert.match(inventorySource, /error\?\.response\?\.data\?\.error \|\| error\?\.message/);
 });

@@ -3,6 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput, RefreshControl, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { api, getAccessToken } from '../../context/AuthContext';
 import { API_URL, COLORS } from '../../constants';
 
@@ -10,6 +11,18 @@ const CATEGORIES = ['RICE_MEAL','DRINKS','ALCOHOLIC_BEVERAGES','COFFEE','BILLIAR
 const CAT_LABELS: Record<string,string> = { RICE_MEAL:'Rice Meal', DRINKS:'Drinks', ALCOHOLIC_BEVERAGES:'Alcohol', COFFEE:'Coffee', BILLIARD_EQUIPMENT:'Equipment', SNACKS:'Snacks' };
 const CAT_ICONS: Record<string,string> = { RICE_MEAL:'🍚', DRINKS:'🥤', ALCOHOLIC_BEVERAGES:'🍺', COFFEE:'☕', BILLIARD_EQUIPMENT:'🎱', SNACKS:'🍟' };
 const storedImageSource = (url?: string) => url ? { uri: /^https?:\/\//i.test(url) ? url : `${API_URL}${url}` } : null;
+const productErrorMessage = (error: any, fallback: string) => error?.response?.data?.error || error?.message || fallback;
+
+const prepareProductImage = async (image: ImagePicker.ImagePickerAsset): Promise<ImagePicker.ImagePickerAsset> => {
+  const actions: ImageManipulator.Action[] = image.width > 1280 ? [{ resize: { width: 1280 } }] : [];
+  const prepared = await ImageManipulator.manipulateAsync(image.uri, actions, {
+    compress: 0.7,
+    format: ImageManipulator.SaveFormat.JPEG,
+  });
+  const originalName = image.fileName || `product-${Date.now()}`;
+  const jpegName = `${originalName.replace(/\.[^/.]+$/, '')}.jpg`;
+  return { ...image, uri: prepared.uri, width: prepared.width, height: prepared.height, fileName: jpegName, mimeType: 'image/jpeg' };
+};
 
 export default function InventoryScreen() {
   const [data, setData] = useState<any>({ products: [], lowStock: [] });
@@ -41,7 +54,14 @@ export default function InventoryScreen() {
     const result = camera
       ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8, allowsEditing: true, aspect: [4, 3] })
       : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8, allowsEditing: true, aspect: [4, 3] });
-    if (!result.canceled && result.assets?.[0]) (target === 'new' ? setNewImage : setEditImage)(result.assets[0]);
+    if (!result.canceled && result.assets?.[0]) {
+      try {
+        const prepared = await prepareProductImage(result.assets[0]);
+        (target === 'new' ? setNewImage : setEditImage)(prepared);
+      } catch (error: any) {
+        Alert.alert('Could not prepare photo', productErrorMessage(error, 'Choose another JPEG, PNG, or WebP image and try again.'));
+      }
+    }
   };
 
   const uploadProductImage = async (productId: string, image: ImagePicker.ImagePickerAsset) => {
@@ -100,16 +120,30 @@ export default function InventoryScreen() {
   const saveProduct = async () => {
     if (!editingProduct || !editForm.name.trim() || !editForm.price) return Alert.alert('Error', 'Name and selling price are required.');
     if (!editingProduct.imageUrl && !editImage) return Alert.alert('Product photo required', 'Choose a photo that shows this exact product.');
+    const price = Number(editForm.price);
+    const costPrice = Number(editForm.costPrice || 0);
+    const lowStockAt = Number(editForm.lowStockAt);
+    if (!Number.isFinite(price) || price < 0) return Alert.alert('Invalid selling price', 'Enter a valid non-negative selling price.');
+    if (!Number.isFinite(costPrice) || costPrice < 0) return Alert.alert('Invalid cost price', 'Enter a valid non-negative cost price.');
+    if (!Number.isInteger(lowStockAt) || lowStockAt < 0) return Alert.alert('Invalid low-stock alert', 'Enter a non-negative whole number.');
     setSaving(true);
     try {
       await api.patch(`/api/products/${editingProduct.id}`, {
-        name: editForm.name.trim(), category: editForm.category, price: Number(editForm.price), costPrice: Number(editForm.costPrice || 0), lowStockAt: Number(editForm.lowStockAt),
+        name: editForm.name.trim(), category: editForm.category, price, costPrice, lowStockAt,
       });
-      if (editImage) await uploadProductImage(editingProduct.id, editImage);
+      if (editImage) {
+        try {
+          await uploadProductImage(editingProduct.id, editImage);
+        } catch (imageError: any) {
+          await fetchData();
+          Alert.alert('Product details saved', `The details were saved, but the photo could not be uploaded. ${productErrorMessage(imageError, 'Please choose the photo again and retry.')}`);
+          return;
+        }
+      }
       setEditImage(null);
       setEditingProduct(null);
       fetchData();
-    } catch (err: any) { Alert.alert('Could not save product', err.response?.data?.error || 'Please check the product details.'); }
+    } catch (err: any) { Alert.alert('Could not save product', productErrorMessage(err, 'Please check your connection and try again.')); }
     finally { setSaving(false); }
   };
 
