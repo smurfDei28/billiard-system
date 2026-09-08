@@ -22,7 +22,7 @@ test('product image upload uses a dedicated public Supabase bucket and stable pu
   const calls = [];
   global.fetch = async (url, options = {}) => {
     calls.push({ url: String(url), options });
-    if (calls.length === 1) return { ok: false, status: 404 };
+    if (calls.length === 1) return { ok: false, status: 400, json: async () => ({ statusCode: '404', code: 'NoSuchBucket', message: 'Bucket not found' }) };
     return { ok: true, status: 200, json: async () => ({}) };
   };
   t.after(() => {

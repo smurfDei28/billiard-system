@@ -19,9 +19,9 @@ const authHeaders = (serviceKey) => ({ apikey: serviceKey, Authorization: `Beare
 
 const ensurePublicBucket = async (storage) => {
   const current = await fetch(bucketUrl(storage, storage.bucket), { headers: authHeaders(storage.serviceKey) });
+  const bucketResponse = typeof current.json === 'function' ? await current.json().catch(() => ({})) : {};
   if (current.ok) {
-    const bucket = await current.json().catch(() => ({}));
-    if (bucket.public === true) return;
+    if (bucketResponse.public === true) return;
     const updated = await fetch(bucketUrl(storage, storage.bucket), {
       method: 'PUT',
       headers: { ...authHeaders(storage.serviceKey), 'Content-Type': 'application/json' },
@@ -30,7 +30,13 @@ const ensurePublicBucket = async (storage) => {
     if (!updated.ok) throw Object.assign(new Error('Product image storage must be public.'), { status: 502 });
     return;
   }
-  if (current.status !== 404) throw Object.assign(new Error('Product image storage could not be checked.'), { status: 502 });
+  // Supabase Storage currently returns HTTP 400 with a nested 404/NoSuchBucket
+  // payload when a bucket does not exist. Treat both response shapes as missing
+  // so the existing automatic bucket creation can run.
+  const isMissingBucket = current.status === 404
+    || String(bucketResponse.statusCode || '') === '404'
+    || bucketResponse.code === 'NoSuchBucket';
+  if (!isMissingBucket) throw Object.assign(new Error('Product image storage could not be checked.'), { status: 502 });
   const created = await fetch(`${storage.baseUrl}/storage/v1/bucket`, {
     method: 'POST',
     headers: { ...authHeaders(storage.serviceKey), 'Content-Type': 'application/json' },
