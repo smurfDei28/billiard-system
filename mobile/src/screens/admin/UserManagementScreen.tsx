@@ -4,7 +4,7 @@ import {
   RefreshControl, ActivityIndicator, Alert, TextInput, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { api } from '../../context/AuthContext';
+import { api, useAuth } from '../../context/AuthContext';
 import { COLORS, RANK_CONFIG, MEMBERSHIP_PLANS } from '../../constants';
 import { hasValidPassword, passwordPolicyMessage } from '../../utils/passwordPolicy';
 
@@ -26,6 +26,7 @@ const Field = ({ label, value, onChange, placeholder, keyboardType, secureTextEn
 );
 
 export default function UserManagementScreen() {
+  const { logout } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [filtered, setFiltered] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,19 +102,36 @@ export default function UserManagementScreen() {
 
   const ROLE_COLORS: Record<string, string> = { MEMBER: COLORS.info, STAFF: COLORS.gold, ADMIN: COLORS.rankElite };
 
+  const confirmLogout = () => {
+    Alert.alert('Sign Out', 'Sign out of the admin account?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: logout },
+    ]);
+  };
+
   if (loading) return <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
 
   return (
     <View style={s.container}>
       <View style={s.header}>
-        <View>
-          <Text style={s.title}>👥 Users ({filtered.length})</Text>
-          <Text style={s.subtitle}>{users.filter(u => u.role === 'MEMBER').length} members · {users.filter(u => u.role === 'STAFF').length} staff</Text>
+        <View style={s.headerTitle}>
+          <Text style={s.title} numberOfLines={1}>👥 Users ({filtered.length})</Text>
+          <Text style={s.subtitle} numberOfLines={1}>{users.filter(u => u.role === 'MEMBER').length} members · {users.filter(u => u.role === 'STAFF').length} staff</Text>
         </View>
-        <TouchableOpacity style={s.createStaffBtn} onPress={() => setCreateStaffModal(true)}>
-          <Ionicons name="person-add-outline" size={16} color="#000" />
-          <Text style={s.createStaffTxt}>Add Staff</Text>
-        </TouchableOpacity>
+        <View style={s.headerActions}>
+          <TouchableOpacity style={s.createStaffBtn} onPress={() => setCreateStaffModal(true)}>
+            <Ionicons name="person-add-outline" size={16} color="#000" />
+            <Text style={s.createStaffTxt}>Add Staff</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.logoutBtn}
+            onPress={confirmLogout}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
+          >
+            <Ionicons name="log-out-outline" size={20} color={COLORS.error} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={s.searchBar}>
@@ -283,10 +301,13 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background },
   header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 14, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  headerTitle: { flex: 1, minWidth: 0, paddingRight: 8 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
   title: { fontSize: 22, fontWeight: '800', color: COLORS.textPrimary },
   subtitle: { fontSize: 13, color: COLORS.textSecondary },
-  createStaffBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.gold, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
+  createStaffBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: COLORS.gold, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
   createStaffTxt: { color: '#000', fontWeight: '700', fontSize: 13 },
+  logoutBtn: { width: 38, height: 38, borderRadius: 10, borderWidth: 1, borderColor: COLORS.error + '70', backgroundColor: COLORS.error + '12', alignItems: 'center', justifyContent: 'center' },
   searchBar: { padding: 12, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceBorder },
   searchInput: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.surfaceLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: COLORS.surfaceBorder },
   searchTxt: { flex: 1, color: COLORS.textPrimary, fontSize: 14 },

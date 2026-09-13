@@ -73,6 +73,16 @@ test('admin reports omit the inaccurate Queue Today card', () => {
   assert.doesNotMatch(reports, /label="Queue Today"/);
 });
 
+test('admin can sign out when analytics and the dashboard are disabled', () => {
+  const users = readMobile('src', 'screens', 'admin', 'UserManagementScreen.tsx');
+  const navigator = readMobile('src', 'navigation', 'AdminNavigator.tsx');
+
+  assert.match(navigator, /<Tab\.Screen name="Users" component=\{UserManagementScreen\}/);
+  assert.match(users, /const \{ logout \} = useAuth\(\)/);
+  assert.match(users, /accessibilityLabel="Sign out"/);
+  assert.match(users, /style: 'destructive', onPress: logout/);
+});
+
 test('payment review status and actions remain stable on narrow screens', () => {
   const payments = readMobile('src', 'screens', 'staff', 'PaymentVerificationScreen.tsx');
 
