@@ -5,6 +5,7 @@
     "scheme": "saturdaynights",
     "version": "1.0.0",
     "orientation": "default",
+    "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
       "backgroundColor": "#0A0E1A"
@@ -16,7 +17,8 @@
     "android": {
       "package": "ph.saturdaynights.billiard",
       "adaptiveIcon": {
-        "backgroundColor": "#0A0E1A"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
       }
     },
     "plugins": [
