@@ -5,9 +5,11 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../context/AuthContext';
+import { useFeatures } from '../../context/FeatureContext';
 import { COLORS } from '../../constants';
 
 export default function ReportsScreen() {
+  const { hasModule } = useFeatures();
   const [period, setPeriod] = useState<7 | 14 | 30>(7);
   const [sales, setSales] = useState<any>(null);
   const [daily, setDaily] = useState<any>(null);
@@ -31,6 +33,18 @@ export default function ReportsScreen() {
   if (loading) return <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
 
   const maxRev = Math.max(...(sales?.dailySales?.map((d: any) => d.revenue) || [1]), 1);
+  const hasTables = hasModule('TABLE_MANAGEMENT');
+  const hasPos = hasModule('POS_INVENTORY');
+  const hasCredits = hasModule('CREDITS_PAYMENTS');
+  const hasTournaments = hasModule('TOURNAMENTS');
+  const hasMembership = hasModule('MEMBERSHIP');
+  const hasRevenueSources = hasTables || hasPos || hasCredits || hasTournaments;
+  const revenueParts = [
+    hasPos ? `POS Sales: ₱${(sales?.posSalesValueTotal || 0).toFixed(0)}` : null,
+    hasCredits ? `Credit Top-ups: ₱${(sales?.creditTopupsTotal || 0).toFixed(0)}` : null,
+    hasTables ? `Table Usage: ₱${(sales?.tableUsageValueTotal || 0).toFixed(0)}` : null,
+    hasTournaments ? `Tournament Cash: ₱${(sales?.tournamentCashCollectionsTotal || 0).toFixed(0)}` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}
@@ -45,19 +59,19 @@ export default function ReportsScreen() {
       <View style={s.todayCard}>
         <Text style={s.todayTitle}>Today — {new Date().toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
         <View style={s.todayGrid}>
-          <TodayStat icon="cash-outline" label="Cash Revenue" value={`₱${(daily?.cashRevenue || 0).toFixed(0)}`} color={COLORS.success} />
-          <TodayStat icon="grid-outline" label="Table Usage Value" value={`₱${(daily?.tableUsageValue || 0).toFixed(0)}`} color={COLORS.primary} />
-          <TodayStat icon="cart-outline" label="POS Sales Value" value={`₱${(daily?.posSalesValue || 0).toFixed(0)}`} color={COLORS.info} />
-          <TodayStat icon="wallet-outline" label="Credit Top-ups" value={`₱${(daily?.creditTopups || 0).toFixed(0)}`} color={COLORS.gold} />
-          <TodayStat icon="trophy-outline" label="Tournament Cash" value={`₱${(daily?.tournamentCashCollections || 0).toFixed(0)}`} color={COLORS.rankElite} />
-          <TodayStat icon="play-outline" label="Sessions" value={daily?.sessionsCount || 0} color={COLORS.rankShark} />
-          <TodayStat icon="receipt-outline" label="POS Orders" value={daily?.ordersCount || 0} color={COLORS.rankElite} />
-          <TodayStat icon="people-outline" label="New Members" value={daily?.newMembersCount || 0} color={COLORS.success} />
+          {hasRevenueSources && <TodayStat icon="cash-outline" label="Cash Revenue" value={`₱${(daily?.cashRevenue || 0).toFixed(0)}`} color={COLORS.success} />}
+          {hasTables && <TodayStat icon="grid-outline" label="Table Usage Value" value={`₱${(daily?.tableUsageValue || 0).toFixed(0)}`} color={COLORS.primary} />}
+          {hasPos && <TodayStat icon="cart-outline" label="POS Sales Value" value={`₱${(daily?.posSalesValue || 0).toFixed(0)}`} color={COLORS.info} />}
+          {hasCredits && <TodayStat icon="wallet-outline" label="Credit Top-ups" value={`₱${(daily?.creditTopups || 0).toFixed(0)}`} color={COLORS.gold} />}
+          {hasTournaments && <TodayStat icon="trophy-outline" label="Tournament Cash" value={`₱${(daily?.tournamentCashCollections || 0).toFixed(0)}`} color={COLORS.rankElite} />}
+          {hasTables && <TodayStat icon="play-outline" label="Sessions" value={daily?.sessionsCount || 0} color={COLORS.rankShark} />}
+          {hasPos && <TodayStat icon="receipt-outline" label="POS Orders" value={daily?.ordersCount || 0} color={COLORS.rankElite} />}
+          {hasMembership && <TodayStat icon="people-outline" label="New Members" value={daily?.newMembersCount || 0} color={COLORS.success} />}
         </View>
       </View>
 
       {/* Top Sellers Today */}
-      {daily?.topSellingItems?.length > 0 && (
+      {hasPos && daily?.topSellingItems?.length > 0 && (
         <View style={s.card}>
           <Text style={s.cardTitle}>🔥 Top Selling Today</Text>
           {daily.topSellingItems.map(([name, qty]: [string, number], i: number) => (
@@ -80,10 +94,10 @@ export default function ReportsScreen() {
       </View>
 
       {/* Revenue Chart */}
-      <View style={s.card}>
+      {hasRevenueSources && <View style={s.card}>
         <Text style={s.cardTitle}>Cash Revenue — Last {period} Days</Text>
         <Text style={s.cardSub}>
-          Cash Revenue: ₱{(sales?.cashRevenueTotal || 0).toFixed(0)} · POS Sales: ₱{(sales?.posSalesValueTotal || 0).toFixed(0)} · Credit Top-ups: ₱{(sales?.creditTopupsTotal || 0).toFixed(0)}
+          Cash Revenue: ₱{(sales?.cashRevenueTotal || 0).toFixed(0)}{revenueParts ? ` · ${revenueParts}` : ''}
         </Text>
         <View style={s.barChart}>
           {(sales?.dailySales || []).map((day: any, i: number) => {
@@ -101,10 +115,10 @@ export default function ReportsScreen() {
             );
           })}
         </View>
-      </View>
+      </View>}
 
       {/* Category Breakdown */}
-      <View style={s.card}>
+      {hasPos && <View style={s.card}>
         <Text style={s.cardTitle}>Sales by Category</Text>
         {(sales?.categoryBreakdown || []).length === 0 ? (
           <Text style={s.emptyTxt}>No POS data for this period</Text>
@@ -128,7 +142,7 @@ export default function ReportsScreen() {
               );
             })
         )}
-      </View>
+      </View>}
 
       {/* Daily Breakdown Table */}
       <View style={s.card}>
@@ -136,7 +150,7 @@ export default function ReportsScreen() {
         <View style={s.tableHead}>
           <Text style={[s.tableCell, s.tableHeadTxt]}>Date</Text>
           <Text style={[s.tableCell, s.tableHeadTxt, { textAlign: 'right' }]}>Cash Revenue</Text>
-          <Text style={[s.tableCell, s.tableHeadTxt, { textAlign: 'right' }]}>Orders</Text>
+          {hasPos && <Text style={[s.tableCell, s.tableHeadTxt, { textAlign: 'right' }]}>Orders</Text>}
         </View>
         {(sales?.dailySales || []).slice().reverse().map((day: any) => {
           const isToday = day.date === new Date().toISOString().split('T')[0];
@@ -149,7 +163,7 @@ export default function ReportsScreen() {
               <Text style={[s.tableCell, { textAlign: 'right', color: day.revenue > 0 ? COLORS.success : COLORS.textMuted, fontWeight: '700' }]}>
                 ₱{day.cashRevenue.toFixed(0)}
               </Text>
-              <Text style={[s.tableCell, { textAlign: 'right', color: COLORS.textSecondary }]}>{day.orders}</Text>
+              {hasPos && <Text style={[s.tableCell, { textAlign: 'right', color: COLORS.textSecondary }]}>{day.orders}</Text>}
             </View>
           );
         })}

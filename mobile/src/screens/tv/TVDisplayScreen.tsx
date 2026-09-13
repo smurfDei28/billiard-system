@@ -8,6 +8,7 @@ import { useKeepAwake } from 'expo-keep-awake';
 import { useSocket } from '../../context/SocketContext';
 import { api } from '../../context/AuthContext';
 import { COLORS, RANK_CONFIG } from '../../constants';
+import { useFeatures } from '../../context/FeatureContext';
 
 const PH_TIME_ZONE = 'Asia/Manila';
 const formatPhilippineTime = (value: Date | string | number) =>
@@ -34,6 +35,10 @@ const formatPhilippineDateTime = (value: Date | string | number) =>
 export default function TVDisplayScreen() {
   useKeepAwake();
   const { socket, isConnected, joinTV } = useSocket();
+  const { hasModule } = useFeatures();
+  const tablesEnabled = hasModule('TABLE_MANAGEMENT');
+  const reservationsEnabled = hasModule('RESERVATIONS');
+  const tournamentsEnabled = hasModule('TOURNAMENTS');
   const [tables, setTables] = useState<any[]>([]);
   const [queue, setQueue] = useState<any[]>([]);
   const [activeTournament, setActiveTournament] = useState<any>(null);
@@ -95,14 +100,14 @@ export default function TVDisplayScreen() {
       socket?.off('notification:broadcast');
       socket?.off('connect');
     };
-  }, [socket]);
+  }, [socket, tablesEnabled, reservationsEnabled, tournamentsEnabled]);
 
   const fetchData = async () => {
     try {
       const [tablesRes, queueRes, tournamentsRes] = await Promise.all([
-        api.get('/api/tables'),
-        api.get('/api/queue'),
-        api.get('/api/tournaments'),
+        tablesEnabled ? api.get('/api/tables') : Promise.resolve({ data: [] }),
+        reservationsEnabled ? api.get('/api/queue') : Promise.resolve({ data: [] }),
+        tournamentsEnabled ? api.get('/api/tournaments') : Promise.resolve({ data: [] }),
       ]);
       setTables(tablesRes.data);
       setQueue(queueRes.data);
@@ -110,7 +115,7 @@ export default function TVDisplayScreen() {
       // The shared list is newest-first; retain the TV's existing behavior of
       // highlighting the most recently completed tournament when none is live.
       const highlighted = tournamentsRes.data.find((t: any) => t.status === 'IN_PROGRESS') || completed[0];
-      if (highlighted) {
+      if (tournamentsEnabled && highlighted) {
         const fullRes = await api.get(`/api/tournaments/${highlighted.id}`);
         setActiveTournament(fullRes.data);
       } else setActiveTournament(null);

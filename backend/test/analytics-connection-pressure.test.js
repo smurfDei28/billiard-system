@@ -23,3 +23,20 @@ test('analytics revenue reads are serialized to avoid consuming the session pool
   assert.equal(rows.length, 5);
   assert.equal(peak, 1);
 });
+
+test('analytics does not query data sources whose operational modules are disabled', async () => {
+  const calls = [];
+  const query = (name) => async () => { calls.push(name); return []; };
+  const db = {
+    order: { findMany: query('orders') },
+    creditTransaction: { findMany: query('credits') },
+    manualPayment: { findMany: query('tournaments') },
+    tableSession: { findMany: query('tables') },
+  };
+  const enabled = (moduleName) => ['REPORTS_ANALYTICS', 'TABLE_MANAGEMENT'].includes(moduleName);
+
+  const rows = await reportData(new Date('2026-08-01'), new Date('2026-08-02'), db, enabled);
+
+  assert.deepEqual(calls, ['tables']);
+  assert.deepEqual(rows, [[], [], [], [], []]);
+});

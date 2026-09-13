@@ -8,9 +8,10 @@ authorized manual score verification or correction and describes full
 production validation as dependent on time, data, hardware, and test conditions.
 
 Call buyer-selectable packaging the **Module Entitlement System (MES)**. The
-backend environment variable `ENABLED_MODULES` is the licensed installation
-manifest. The API blocks excluded modules with `MODULE_NOT_ENTITLED`, while the
-mobile client removes their navigation entries.
+backend environment variable `ENABLED_GROUPS` is the licensed installation
+manifest. Package dependencies expand into the existing module permissions;
+the API blocks excluded modules with `MODULE_NOT_ENTITLED`, while the mobile
+client removes their navigation entries.
 
 ## Architecture
 
@@ -39,7 +40,7 @@ database are cloud-hosted; live camera video is not uploaded to the backend.
 
 1. Deploy `backend/Dockerfile` to the selected container host.
 2. Configure `DATABASE_URL`, JWT secrets, `BACKEND_URL`, `FRONTEND_URL`,
-   `SENSOR_API_KEY`, Supabase keys, and `ENABLED_MODULES` in the host secret
+   `SENSOR_API_KEY`, Supabase keys, and `ENABLED_GROUPS` in the host secret
    manager. Never commit `.env`.
 3. Run `npx prisma migrate deploy` once against the deployment database.
 4. Confirm `GET /health` and `GET /api/features` over HTTPS.
@@ -85,4 +86,3 @@ with manual correction covering missed events.
 - Final table ID and a game session ID from the deployed database.
 - Supabase, container-host, and Expo/EAS access owned by the group.
 - A fixed camera mount and the computer that will run inference at the venue.
-

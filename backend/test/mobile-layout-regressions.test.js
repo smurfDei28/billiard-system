@@ -51,6 +51,20 @@ test('TV presentation uses explicit Philippine time and landscape orientation', 
   assert.match(tv, /isConnected \? '● LIVE' : '● RECONNECTING'/);
   assert.match(rootNavigator, /OrientationLock\.PORTRAIT_UP/);
   assert.equal(appConfig.expo.orientation, 'default');
+  assert.match(tv, /tablesEnabled \? api\.get\('\/api\/tables'\) : Promise\.resolve/);
+  assert.match(tv, /tournamentsEnabled \? api\.get\('\/api\/tournaments'\) : Promise\.resolve/);
+});
+
+test('analytics screens hide cards belonging to disabled operational groups', () => {
+  const reports = readMobile('src', 'screens', 'admin', 'ReportsScreen.tsx');
+  const dashboard = readMobile('src', 'screens', 'admin', 'AdminDashboardScreen.tsx');
+
+  assert.match(reports, /hasPos && <TodayStat[^>]+label="POS Sales Value"/);
+  assert.match(reports, /hasCredits && <TodayStat[^>]+label="Credit Top-ups"/);
+  assert.match(reports, /hasTournaments && <TodayStat[^>]+label="Tournament Cash"/);
+  assert.match(dashboard, /hasPos && sales\?\.categoryBreakdown/);
+  assert.match(dashboard, /hasTables && <View style=\{s\.card\}>/);
+  assert.match(dashboard, /hasCredits && <View style=\{s\.card\}>/);
 });
 
 test('admin reports omit the inaccurate Queue Today card', () => {

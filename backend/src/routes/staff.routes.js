@@ -3,6 +3,7 @@ const router = express.Router();
 const prisma = require('../config/prisma');
 const { authenticate, authorize } = require('../middleware/auth.middleware');
 const { summarizeRevenue } = require('../utils/revenueReporting');
+const { isFeatureEnabled, requireFeature } = require('../config/features');
 
 // Get all staff actions log (admin only)
 router.get('/actions', authenticate, authorize('ADMIN'), async (req, res) => {
@@ -43,7 +44,7 @@ router.patch('/:userId/role', authenticate, authorize('ADMIN'), async (req, res)
 });
 
 // Get daily report
-router.get('/daily-report', authenticate, authorize('ADMIN', 'STAFF'), async (req, res) => {
+router.get('/daily-report', authenticate, authorize('ADMIN', 'STAFF'), requireFeature('REPORTS_ANALYTICS'), async (req, res) => {
   try {
     const { date } = req.query;
     const start = date ? new Date(String(date)) : new Date();
@@ -51,19 +52,28 @@ router.get('/daily-report', authenticate, authorize('ADMIN', 'STAFF'), async (re
     const end = new Date(start);
     end.setHours(23, 59, 59, 999);
 
+    const sections = {
+      membership: isFeatureEnabled('MEMBERSHIP'),
+      tables: isFeatureEnabled('TABLE_MANAGEMENT'),
+      reservations: isFeatureEnabled('RESERVATIONS'),
+      pos: isFeatureEnabled('POS_INVENTORY'),
+      credits: isFeatureEnabled('CREDITS_PAYMENTS'),
+      tournaments: isFeatureEnabled('TOURNAMENTS'),
+    };
     const [sessions, orders, topups, tournamentPayments, walletTournamentFees, newMembers, queueTotal] = await Promise.all([
-      prisma.tableSession.findMany({ where: { createdAt: { gte: start, lte: end } }, include: { table: true } }),
-      prisma.order.findMany({ where: { createdAt: { gte: start, lte: end }, paymentStatus: 'PAID', status: { not: 'VOIDED' } }, include: { items: { include: { product: true } } } }),
-      prisma.creditTransaction.findMany({ where: { type: 'TOPUP', createdAt: { gte: start, lte: end } } }),
-      prisma.manualPayment.findMany({ where: { purpose: 'TOURNAMENT_ENTRY', status: 'APPROVED', reviewedAt: { gte: start, lte: end } }, select: { amount: true, createdAt: true, reviewedAt: true } }),
-      prisma.creditTransaction.findMany({ where: { type: 'TOURNAMENT_FEE', createdAt: { gte: start, lte: end } }, select: { amount: true, createdAt: true } }),
-      prisma.user.count({ where: { role: 'MEMBER', createdAt: { gte: start, lte: end } } }),
-      prisma.queueEntry.count({ where: { joinedAt: { gte: start, lte: end } } }),
+      sections.tables ? prisma.tableSession.findMany({ where: { createdAt: { gte: start, lte: end } }, include: { table: true } }) : [],
+      sections.pos ? prisma.order.findMany({ where: { createdAt: { gte: start, lte: end }, paymentStatus: 'PAID', status: { not: 'VOIDED' } }, include: { items: { include: { product: true } } } }) : [],
+      sections.credits ? prisma.creditTransaction.findMany({ where: { type: 'TOPUP', createdAt: { gte: start, lte: end } } }) : [],
+      sections.tournaments ? prisma.manualPayment.findMany({ where: { purpose: 'TOURNAMENT_ENTRY', status: 'APPROVED', reviewedAt: { gte: start, lte: end } }, select: { amount: true, createdAt: true, reviewedAt: true } }) : [],
+      sections.tournaments && sections.credits ? prisma.creditTransaction.findMany({ where: { type: 'TOURNAMENT_FEE', createdAt: { gte: start, lte: end } }, select: { amount: true, createdAt: true } }) : [],
+      sections.membership ? prisma.user.count({ where: { role: 'MEMBER', createdAt: { gte: start, lte: end } } }) : 0,
+      sections.reservations ? prisma.queueEntry.count({ where: { joinedAt: { gte: start, lte: end } } }) : 0,
     ]);
 
     const revenue = summarizeRevenue({ orders, topups, tournamentPayments, sessions, walletTournamentFees });
 
     res.json({
+      availableSections: sections,
       date: start.toISOString().split('T')[0],
       // Same definition as /api/analytics: external money collected once.
       totalRevenue: revenue.cashRevenue,

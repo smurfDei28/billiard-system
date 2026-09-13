@@ -7,9 +7,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../context/AuthContext';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, RANK_CONFIG } from '../../constants';
+import { useFeatures } from '../../context/FeatureContext';
 
 export default function AdminDashboardScreen({ navigation }: any) {
   const { user, logout } = useAuth();
+  const { hasModule } = useFeatures();
   const [data, setData] = useState<any>(null);
   const [sales, setSales] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -33,6 +35,14 @@ export default function AdminDashboardScreen({ navigation }: any) {
 
   const summary = data?.summary || {};
   const maxRevenue = Math.max(...(sales?.dailySales?.map((d: any) => d.revenue) || [1]));
+  const hasMembership = hasModule('MEMBERSHIP');
+  const hasTables = hasModule('TABLE_MANAGEMENT');
+  const hasReservations = hasModule('RESERVATIONS');
+  const hasPos = hasModule('POS_INVENTORY');
+  const hasCredits = hasModule('CREDITS_PAYMENTS');
+  const hasTournaments = hasModule('TOURNAMENTS');
+  const hasLoyalty = hasModule('LOYALTY_REWARDS');
+  const hasRevenueSources = hasTables || hasPos || hasCredits || hasTournaments;
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}
@@ -47,12 +57,12 @@ export default function AdminDashboardScreen({ navigation }: any) {
           </View>
 
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TouchableOpacity
+            {hasTables && <TouchableOpacity
               style={{ padding: 8, borderRadius: 10, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surface }}
               onPress={() => navigation.navigate('TV')}
             >
               <Ionicons name="tv-outline" size={18} color={COLORS.textPrimary} />
-            </TouchableOpacity>
+            </TouchableOpacity>}
             <TouchableOpacity
               style={{ padding: 8, borderRadius: 10, borderWidth: 1, borderColor: COLORS.surfaceBorder, backgroundColor: COLORS.surface }}
               onPress={() => {
@@ -70,23 +80,25 @@ export default function AdminDashboardScreen({ navigation }: any) {
 
       {/* KPI Cards */}
       <View style={s.kpiGrid}>
-        <KPICard
+        {hasRevenueSources && <KPICard
           icon="cash-outline"
           label="Today's Cash Revenue"
           value={`₱${(summary.todayRevenue || 0).toFixed(0)}`}
           color={COLORS.success}
           sub="External collections only"
-        />
-        <KPICard icon="people-outline" label="Total Members" value={summary.totalMembers || 0} color={COLORS.info} sub="Registered accounts" />
-        <KPICard icon="grid-outline" label="Active Tables" value={summary.activeSessionsCount || 0} color={COLORS.error} sub="Currently playing" />
-        <KPICard icon="time-outline" label="Queue" value={summary.queueCount || 0} color={COLORS.warning} sub="Currently waiting" />
+        />}
+        {hasMembership && <KPICard icon="people-outline" label="Total Members" value={summary.totalMembers || 0} color={COLORS.info} sub="Registered accounts" />}
+        {hasTables && <KPICard icon="grid-outline" label="Active Tables" value={summary.activeSessionsCount || 0} color={COLORS.error} sub="Currently playing" />}
+        {hasReservations && <KPICard icon="time-outline" label="Reservations" value={summary.queueCount || 0} color={COLORS.warning} sub="Current schedule" />}
       </View>
 
       {/* 7-Day cash-collection chart */}
-      <View style={s.card}>
+      {hasRevenueSources && <View style={s.card}>
         <Text style={s.cardTitle}>7-Day Cash Revenue</Text>
         <Text style={s.cardSub}>
-          Cash Revenue: ₱{(sales?.cashRevenueTotal || 0).toFixed(0)} · POS Sales: ₱{(sales?.posSalesValueTotal || 0).toFixed(0)} · Credit Top-ups: ₱{(sales?.creditTopupsTotal || 0).toFixed(0)}
+          Cash Revenue: ₱{(sales?.cashRevenueTotal || 0).toFixed(0)}
+          {hasPos ? ` · POS Sales: ₱${(sales?.posSalesValueTotal || 0).toFixed(0)}` : ''}
+          {hasCredits ? ` · Credit Top-ups: ₱${(sales?.creditTopupsTotal || 0).toFixed(0)}` : ''}
         </Text>
         <View style={s.barChart}>
           {(sales?.dailySales || []).map((day: any) => {
@@ -103,10 +115,10 @@ export default function AdminDashboardScreen({ navigation }: any) {
             );
           })}
         </View>
-      </View>
+      </View>}
 
       {/* Category Breakdown */}
-      {sales?.categoryBreakdown?.length > 0 && (
+      {hasPos && sales?.categoryBreakdown?.length > 0 && (
         <View style={s.card}>
           <Text style={s.cardTitle}>POS by Category</Text>
           {sales.categoryBreakdown.map((cat: any) => {
@@ -126,7 +138,7 @@ export default function AdminDashboardScreen({ navigation }: any) {
       )}
 
       {/* Table Status */}
-      <View style={s.card}>
+      {hasTables && <View style={s.card}>
         <Text style={s.cardTitle}>Table Status</Text>
         <View style={s.tableGrid}>
           {(data?.tableStatuses || []).map((table: any) => {
@@ -146,10 +158,10 @@ export default function AdminDashboardScreen({ navigation }: any) {
             );
           })}
         </View>
-      </View>
+      </View>}
 
       {/* Top Players */}
-      <View style={s.card}>
+      {hasLoyalty && <View style={s.card}>
         <Text style={s.cardTitle}>🏆 Top Players</Text>
         {(data?.topPlayers || []).map((gp: any, i: number) => {
           const rankCfg = RANK_CONFIG[gp.rank as keyof typeof RANK_CONFIG] || RANK_CONFIG.Rookie;
@@ -168,10 +180,10 @@ export default function AdminDashboardScreen({ navigation }: any) {
           );
         })}
         {(data?.topPlayers?.length || 0) === 0 && <Text style={s.emptyTxt}>No player data yet</Text>}
-      </View>
+      </View>}
 
       {/* Low Stock */}
-      {(data?.lowStockProducts?.length || 0) > 0 && (
+      {hasPos && (data?.lowStockProducts?.length || 0) > 0 && (
         <View style={[s.card, s.alertCard]}>
           <Text style={s.cardTitle}>⚠️ Low Stock Alert</Text>
           {data.lowStockProducts.map((p: any) => (
@@ -184,7 +196,7 @@ export default function AdminDashboardScreen({ navigation }: any) {
       )}
 
       {/* Recent Transactions */}
-      <View style={s.card}>
+      {hasCredits && <View style={s.card}>
         <Text style={s.cardTitle}>Recent Transactions</Text>
         {(data?.recentTransactions || []).map((tx: any) => (
           <View key={tx.id} style={s.txRow}>
@@ -201,7 +213,7 @@ export default function AdminDashboardScreen({ navigation }: any) {
           </View>
         ))}
         {(data?.recentTransactions?.length || 0) === 0 && <Text style={s.emptyTxt}>No recent transactions</Text>}
-      </View>
+      </View>}
     </ScrollView>
   );
 }

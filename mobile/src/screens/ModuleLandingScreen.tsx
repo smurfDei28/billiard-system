@@ -7,16 +7,16 @@ import { useAuth } from '../context/AuthContext';
 const readable = (value: string) => value.toLowerCase().split('_').map((part) => part[0].toUpperCase() + part.slice(1)).join(' ');
 
 export default function ModuleLandingScreen() {
-  const { enabledModules } = useFeatures();
+  const { enabledGroups, enabledModules } = useFeatures();
   const { logout } = useAuth();
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Saturday Nights Billiard</Text>
       <Text style={styles.subtitle}>Modules included in this installation</Text>
       <View style={styles.list}>
-        {enabledModules.map((moduleName) => (
-          <View key={moduleName} style={styles.module}>
-            <Text style={styles.moduleText}>{readable(moduleName)}</Text>
+        {(enabledGroups.length ? enabledGroups : enabledModules).map((featureName) => (
+          <View key={featureName} style={styles.module}>
+            <Text style={styles.moduleText}>{readable(featureName)}</Text>
           </View>
         ))}
       </View>
@@ -40,4 +40,3 @@ const styles = StyleSheet.create({
   logout: { marginTop: 28, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: COLORS.error, alignItems: 'center' },
   logoutText: { color: COLORS.error, fontWeight: '800' },
 });
-

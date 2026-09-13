@@ -12,7 +12,7 @@ const { startReservationScheduler, stopReservationScheduler } = require('./servi
 const { startSessionMonitor, stopSessionMonitor } = require('./services/sessionMonitor');
 const { startTournamentRegistrationScheduler, stopTournamentRegistrationScheduler } = require('./services/tournamentRegistrationScheduler');
 const prisma = require('./config/prisma');
-const { enabledModules, requireFeature } = require('./config/features');
+const { enabledGroups, enabledModules, configurationMode, requireFeature } = require('./config/features');
 
 const app = express();
 // Railway terminates HTTPS at its reverse proxy. Trust exactly that first hop so
@@ -78,7 +78,7 @@ app.use('/api', limiter);
 // Module Entitlement System (MES): this public manifest lets every client show
 // only the modules provisioned for this installation. API guards below remain
 // the source of truth, so hidden routes cannot be called directly.
-app.get('/api/features', (req, res) => res.json({ enabledModules }));
+app.get('/api/features', (req, res) => res.json({ enabledGroups, enabledModules, configurationMode }));
 
 // Login attempts need stricter brute-force protection. Other authenticated
 // auth routes (for example GET /me) are normal API traffic and must not spend

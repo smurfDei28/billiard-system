@@ -1,5 +1,6 @@
 const prisma = require('../config/prisma');
 const { summarizeRevenue, buildDailyRevenue, isAcquireMockSandboxTopup } = require('../utils/revenueReporting');
+const { isFeatureEnabled } = require('../config/features');
 
 const dateRange = (start) => {
   const end = new Date(start);
@@ -9,27 +10,27 @@ const dateRange = (start) => {
 
 // These reports read independent data sets. Keeping them sequential prevents a
 // single Admin request from occupying the complete Supabase session pool.
-const reportData = async (startDate, endDate, db = prisma) => {
-  const orders = await db.order.findMany({
+const reportData = async (startDate, endDate, db = prisma, featureEnabled = isFeatureEnabled) => {
+  const orders = featureEnabled('POS_INVENTORY') ? await db.order.findMany({
     where: { createdAt: { gte: startDate, lt: endDate }, paymentStatus: 'PAID', status: { not: 'VOIDED' } },
     include: { items: { include: { product: true } } },
-  });
-  const topups = await db.creditTransaction.findMany({
+  }) : [];
+  const topups = featureEnabled('CREDITS_PAYMENTS') ? await db.creditTransaction.findMany({
     where: { createdAt: { gte: startDate, lt: endDate }, type: 'TOPUP' },
     select: { createdAt: true, amount: true, referenceNo: true },
-  });
-  const tournamentPayments = await db.manualPayment.findMany({
+  }) : [];
+  const tournamentPayments = featureEnabled('TOURNAMENTS') ? await db.manualPayment.findMany({
     where: { purpose: 'TOURNAMENT_ENTRY', status: 'APPROVED', reviewedAt: { gte: startDate, lt: endDate } },
     select: { createdAt: true, reviewedAt: true, amount: true, method: true },
-  });
-  const sessions = await db.tableSession.findMany({
+  }) : [];
+  const sessions = featureEnabled('TABLE_MANAGEMENT') ? await db.tableSession.findMany({
     where: { createdAt: { gte: startDate, lt: endDate } },
     select: { createdAt: true, creditsUsed: true, status: true },
-  });
-  const walletTournamentFees = await db.creditTransaction.findMany({
+  }) : [];
+  const walletTournamentFees = featureEnabled('TOURNAMENTS') && featureEnabled('CREDITS_PAYMENTS') ? await db.creditTransaction.findMany({
     where: { createdAt: { gte: startDate, lt: endDate }, type: 'TOURNAMENT_FEE' },
     select: { createdAt: true, amount: true },
-  });
+  }) : [];
   return [orders, topups, tournamentPayments, sessions, walletTournamentFees];
 };
 
@@ -38,22 +39,34 @@ const getDashboard = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const { end: tomorrow } = dateRange(today);
+    const sections = {
+      membership: isFeatureEnabled('MEMBERSHIP'),
+      tables: isFeatureEnabled('TABLE_MANAGEMENT'),
+      reservations: isFeatureEnabled('RESERVATIONS'),
+      pos: isFeatureEnabled('POS_INVENTORY'),
+      credits: isFeatureEnabled('CREDITS_PAYMENTS'),
+      tournaments: isFeatureEnabled('TOURNAMENTS'),
+      loyalty: isFeatureEnabled('LOYALTY_REWARDS'),
+    };
     const [totalMembers, activeSessionsCount, queueCount] = await Promise.all([
-      prisma.user.count({ where: { role: 'MEMBER' } }),
-      prisma.tableSession.count({ where: { status: 'ACTIVE' } }),
-      prisma.queueEntry.count({ where: { status: 'WAITING' } }),
+      sections.membership ? prisma.user.count({ where: { role: 'MEMBER' } }) : 0,
+      sections.tables ? prisma.tableSession.count({ where: { status: 'ACTIVE' } }) : 0,
+      sections.reservations ? prisma.queueEntry.count({ where: { status: 'WAITING' } }) : 0,
     ]);
     const reportRows = await reportData(today, tomorrow);
     const [lowStockProducts, recentTransactions, topPlayers] = await Promise.all([
-      prisma.product.findMany({ where: { stock: { lte: 5 }, isActive: true }, orderBy: { stock: 'asc' }, take: 5 }),
-      prisma.creditTransaction.findMany({ orderBy: { createdAt: 'desc' }, take: 10, include: { user: { select: { firstName: true, lastName: true } } } }),
-      prisma.gamifiedProfile.findMany({ orderBy: { totalWins: 'desc' }, take: 5, include: { user: { select: { firstName: true, lastName: true } } } }),
+      sections.pos ? prisma.product.findMany({ where: { stock: { lte: 5 }, isActive: true }, orderBy: { stock: 'asc' }, take: 5 }) : [],
+      sections.credits ? prisma.creditTransaction.findMany({ orderBy: { createdAt: 'desc' }, take: 10, include: { user: { select: { firstName: true, lastName: true } } } }) : [],
+      sections.loyalty ? prisma.gamifiedProfile.findMany({ orderBy: { totalWins: 'desc' }, take: 5, include: { user: { select: { firstName: true, lastName: true } } } }) : [],
     ]);
-    const tableStatuses = await prisma.billiardTable.findMany({ orderBy: { tableNumber: 'asc' }, include: { sessions: { where: { status: 'ACTIVE' } }, queue: { where: { status: 'WAITING' } } } });
+    const tableStatuses = sections.tables
+      ? await prisma.billiardTable.findMany({ orderBy: { tableNumber: 'asc' }, include: { sessions: { where: { status: 'ACTIVE' } }, queue: { where: { status: 'WAITING' } } } })
+      : [];
     const [orders, topups, tournamentPayments, sessions, walletTournamentFees] = reportRows;
     const revenue = summarizeRevenue({ orders, topups, tournamentPayments, sessions, walletTournamentFees });
 
     res.json({
+      availableSections: sections,
       summary: {
         totalMembers, activeSessionsCount, queueCount,
         // `todayRevenue` is retained for existing clients and now consistently
@@ -103,6 +116,12 @@ const getSalesReport = async (req, res) => {
     }));
 
     res.json({
+      availableSections: {
+        tables: isFeatureEnabled('TABLE_MANAGEMENT'),
+        pos: isFeatureEnabled('POS_INVENTORY'),
+        credits: isFeatureEnabled('CREDITS_PAYMENTS'),
+        tournaments: isFeatureEnabled('TOURNAMENTS'),
+      },
       dailySales,
       categoryBreakdown: Object.values(byCategory),
       // `totalRevenue` remains for clients but is now the single Cash Revenue definition.
