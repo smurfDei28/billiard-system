@@ -83,6 +83,19 @@ test('admin can sign out when analytics and the dashboard are disabled', () => {
   assert.match(users, /style: 'destructive', onPress: logout/);
 });
 
+test('vision entitlement exposes the staff camera-scoring workflow', () => {
+  const navigator = readMobile('src', 'navigation', 'StaffNavigator.tsx');
+  const scoring = readMobile('src', 'screens', 'staff', 'CameraScoringScreen.tsx');
+
+  assert.match(navigator, /hasModule\('CAMERA_SCORING'\).*<Tab\.Screen name="Vision"/s);
+  assert.match(scoring, /api\.post\('\/api\/sensor\/game\/start'/);
+  assert.match(scoring, /api\.get\(`\/api\/sensor\/table\/\$\{tableId\}\/live`\)/);
+  assert.match(scoring, /api\.patch\(`\/api\/sensor\/game\/\$\{activeGame\.sessionId\}\/end`/);
+  assert.doesNotMatch(scoring, /enter.*sensor key.*Gradio/i);
+  assert.match(scoring, /Session ID/);
+  assert.match(scoring, /cannot be inferred safely from the video/);
+});
+
 test('payment review status and actions remain stable on narrow screens', () => {
   const payments = readMobile('src', 'screens', 'staff', 'PaymentVerificationScreen.tsx');
 

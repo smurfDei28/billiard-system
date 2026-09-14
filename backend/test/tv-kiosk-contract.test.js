@@ -17,7 +17,11 @@ test('TV kiosk uses existing authentication and exposes no write controls', () =
   assert.match(kioskSource, /\/api\/auth\/login/);
   assert.match(kioskSource, /\['STAFF', 'ADMIN'\]\.includes/);
   assert.match(kioskSource, /sessionStorage\.setItem\('tvAccessToken'/);
-  assert.match(kioskSource, /Promise\.all\(\[request\('\/api\/tables'\), request\('\/api\/queue'\), request\('\/api\/tournaments'\)\]\)/);
+  assert.match(kioskSource, /request\('\/api\/tables'\)/);
+  assert.match(kioskSource, /request\('\/api\/queue'\)/);
+  assert.match(kioskSource, /request\('\/api\/tournaments'\)/);
+  assert.match(kioskSource, /request\('\/api\/sensor\/games\/active'\)\.catch\(\(\) => \[\]\)/);
+  assert.match(kioskSource, /CAMERA ·/);
   assert.doesNotMatch(kioskSource, /method:\s*['"](?:PATCH|PUT|DELETE)['"]/);
   assert.doesNotMatch(kioskHtml, /start session|complete match|approve reservation/i);
 });

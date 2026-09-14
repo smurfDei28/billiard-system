@@ -44,10 +44,22 @@ const findDuplicateEvent = (ballsPotted, eventId) => {
   return ballsPotted.find((item) => item && item.eventId === eventId) || null;
 };
 
+const validateCameraGameSession = (event, gameScore) => {
+  if (event?.source !== 'CAMERA_VISION') return null;
+  if (!gameScore) return { status: 404, error: 'Camera game session not found' };
+  if (gameScore.tableId !== event.tableId) {
+    return { status: 409, error: 'Camera game session belongs to a different table' };
+  }
+  if (gameScore.status !== 'IN_PROGRESS') {
+    return { status: 409, error: 'Camera game session is no longer active' };
+  }
+  return null;
+};
+
 module.exports = {
   VALID_POCKETS,
   VISION_BALL_LABELS,
   normalizePocketEvent,
   findDuplicateEvent,
+  validateCameraGameSession,
 };
-

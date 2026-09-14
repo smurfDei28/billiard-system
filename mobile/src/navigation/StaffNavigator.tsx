@@ -12,6 +12,7 @@ import PaymentVerificationScreen from '../screens/staff/PaymentVerificationScree
 import StaffTournamentOperationsScreen from '../screens/staff/StaffTournamentOperationsScreen';
 import StaffNotificationsScreen from '../screens/staff/StaffNotificationsScreen';
 import MemberOrdersScreen from '../screens/staff/MemberOrdersScreen';
+import CameraScoringScreen from '../screens/staff/CameraScoringScreen';
 import { useFeatures } from '../context/FeatureContext';
 import ModuleLandingScreen from '../screens/ModuleLandingScreen';
 
@@ -19,7 +20,7 @@ const Tab = createBottomTabNavigator();
 
 export default function StaffNavigator() {
   const { hasModule } = useFeatures();
-  const hasStaffModule = hasModule('TABLE_MANAGEMENT') || hasModule('POS_INVENTORY') || hasModule('RESERVATIONS') || hasModule('CREDITS_PAYMENTS') || hasModule('TOURNAMENTS');
+  const hasStaffModule = hasModule('TABLE_MANAGEMENT') || hasModule('POS_INVENTORY') || hasModule('RESERVATIONS') || hasModule('CREDITS_PAYMENTS') || hasModule('TOURNAMENTS') || hasModule('CAMERA_SCORING');
   return (
     <Tab.Navigator
       backBehavior="history"
@@ -46,6 +47,7 @@ export default function StaffNavigator() {
             Reservations: focused ? 'calendar' : 'calendar-outline',
             Payments: focused ? 'card' : 'card-outline',
             Matches: focused ? 'trophy' : 'trophy-outline',
+            Vision: focused ? 'videocam' : 'videocam-outline',
             Notifications: focused ? 'notifications' : 'notifications-outline',
           };
           // Safe fallback using a known valid Ionicons name
@@ -60,6 +62,7 @@ export default function StaffNavigator() {
       {hasModule('RESERVATIONS') && <Tab.Screen name="Queue" component={StaffQueueScreen} />}
       {hasModule('CREDITS_PAYMENTS') && <Tab.Screen name="Payments" component={PaymentVerificationScreen} />}
       {hasModule('TOURNAMENTS') && <Tab.Screen name="Matches" component={StaffTournamentOperationsScreen} />}
+      {hasModule('CAMERA_SCORING') && <Tab.Screen name="Vision" component={CameraScoringScreen} />}
       {hasModule('POS_INVENTORY') && <Tab.Screen name="Inventory" component={InventoryScreen} options={{ tabBarButton: () => null }} />}
       {hasModule('CREDITS_PAYMENTS') && <Tab.Screen name="Credits" component={CreditTopupScreen} options={{ tabBarButton: () => null }} />}
       {hasModule('RESERVATIONS') && <Tab.Screen name="Reservations" component={StaffReservationScreen} options={{ tabBarButton: () => null }} />}

@@ -39,7 +39,7 @@
     return node;
   };
 
-  const renderTables = (tables) => {
+  const renderTables = (tables, cameraGames = []) => {
     const container = $('tables');
     container.replaceChildren();
     if (!tables.length) return container.append(element('p', 'empty', 'No tables configured'));
@@ -51,7 +51,11 @@
       top.append(identity, element('span', 'status', String(table.status).replaceAll('_', ' ')));
       let detail = 'Ready for play';
       const active = table.sessions?.[0];
-      if (active) detail = active.isWalkin && active.expectedEndTime ? `Expected until ${formatTime(active.expectedEndTime)}` : `Started ${formatTime(active.startTime)}`;
+      const cameraGame = cameraGames.find((game) => game.tableId === table.id);
+      if (cameraGame) {
+        const detected = Array.isArray(cameraGame.ballsPotted) ? cameraGame.ballsPotted.length : 0;
+        detail = `CAMERA · ${cameraGame.player1Name} vs ${cameraGame.player2Name} · ${detected} detected`;
+      } else if (active) detail = active.isWalkin && active.expectedEndTime ? `Expected until ${formatTime(active.expectedEndTime)}` : `Started ${formatTime(active.startTime)}`;
       else if (table.nextReservation) detail = `Next reservation ${formatTime(table.nextReservation.startTime)}`;
       card.append(top, element('p', 'table-detail', detail));
       container.append(card);
@@ -114,10 +118,15 @@
     if (requestInFlight) return;
     requestInFlight = true;
     try {
-      const [tables, reservations, tournaments] = await Promise.all([request('/api/tables'), request('/api/queue'), request('/api/tournaments')]);
+      const [tables, reservations, tournaments, cameraGames] = await Promise.all([
+        request('/api/tables'),
+        request('/api/queue'),
+        request('/api/tournaments'),
+        request('/api/sensor/games/active').catch(() => []),
+      ]);
       const selected = tournaments.find((item) => item.status === 'IN_PROGRESS') || tournaments.find((item) => item.status === 'COMPLETED');
       const tournament = selected ? await request(`/api/tournaments/${encodeURIComponent(selected.id)}`) : null;
-      renderTables(tables);
+      renderTables(tables, cameraGames);
       renderReservations(reservations);
       renderTournament(tournament);
       $('connection').className = 'connection live';

@@ -1,2 +1,6 @@
 ultralytics>=8.3,<9
-
+gradio>=4
+trackers
+supervision
+opencv-python
+numpy

@@ -13,6 +13,7 @@ backend/uploads/
 vision/.venv/
 vision/models/
 vision/test-videos/
+vision/bridge.env
 *.pt
 *.pth
 *.onnx

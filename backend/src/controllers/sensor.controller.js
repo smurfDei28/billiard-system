@@ -1,6 +1,6 @@
 const prisma = require('../config/prisma');
 const { updatePlayerRank } = require('../utils/gamification');
-const { normalizePocketEvent, findDuplicateEvent } = require('../utils/sensorEvents');
+const { normalizePocketEvent, findDuplicateEvent, validateCameraGameSession } = require('../utils/sensorEvents');
 
 // Raspberry Pi posts to this endpoint when a pocket sensor is triggered
 const pocketDetected = async (req, res) => {
@@ -23,6 +23,8 @@ const pocketDetected = async (req, res) => {
         }
       }
       gameScore = await prisma.gameScore.findUnique({ where: { sessionId } });
+      const sessionError = validateCameraGameSession(normalized.event, gameScore);
+      if (sessionError) return res.status(sessionError.status).json({ error: sessionError.error });
       const duplicate = findDuplicateEvent(gameScore?.ballsPotted, eventId);
       if (duplicate) return res.json({ success: true, duplicate: true, gameScore, event: duplicate });
     }
@@ -197,17 +199,20 @@ const endGame = async (req, res) => {
 const getLiveData = async (req, res) => {
   const { tableId } = req.params;
   try {
+    const activeGame = await prisma.gameScore.findFirst({
+      where: { tableId, status: 'IN_PROGRESS' },
+      orderBy: { startedAt: 'desc' },
+    });
+
     const readings = await prisma.sensorReading.findMany({
       where: {
         tableId,
-        triggeredAt: { gte: new Date(Date.now() - 3 * 60 * 60 * 1000) },
+        ...(activeGame
+          ? { sessionId: activeGame.sessionId }
+          : { triggeredAt: { gte: new Date(Date.now() - 3 * 60 * 60 * 1000) } }),
       },
       orderBy: { triggeredAt: 'desc' },
       take: 100,
-    });
-
-    const activeGame = await prisma.gameScore.findFirst({
-      where: { tableId, status: 'IN_PROGRESS' },
     });
 
     res.json({ readings, activeGame });
@@ -216,4 +221,51 @@ const getLiveData = async (req, res) => {
   }
 };
 
-module.exports = { pocketDetected, startGame, updateScore, endGame, getLiveData };
+// A local GPU bridge uses this authenticated endpoint to bind one scoring run
+// to the active session before Lock In. No player or authentication secrets are
+// exposed beyond the already shared sensor key.
+const getActiveBridgeGame = async (req, res) => {
+  const { tableId } = req.params;
+  try {
+    const game = await prisma.gameScore.findFirst({
+      where: { tableId, status: 'IN_PROGRESS' },
+      orderBy: { startedAt: 'desc' },
+      select: {
+        sessionId: true,
+        tableId: true,
+        player1Name: true,
+        player2Name: true,
+        gameType: true,
+        status: true,
+        startedAt: true,
+      },
+    });
+    if (!game) return res.status(404).json({ error: 'No active camera game for this table' });
+    res.json(game);
+  } catch (err) {
+    console.error('[Bridge Session Error]', err);
+    res.status(500).json({ error: 'Failed to get active camera game' });
+  }
+};
+
+const getActiveGames = async (_req, res) => {
+  try {
+    const games = await prisma.gameScore.findMany({
+      where: { status: 'IN_PROGRESS' },
+      orderBy: { startedAt: 'desc' },
+    });
+    res.json(games);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get active camera games' });
+  }
+};
+
+module.exports = {
+  pocketDetected,
+  startGame,
+  updateScore,
+  endGame,
+  getLiveData,
+  getActiveBridgeGame,
+  getActiveGames,
+};
