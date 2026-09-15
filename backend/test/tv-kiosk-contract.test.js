@@ -16,7 +16,11 @@ test('browser TV origin is explicitly added without disabling existing CORS rest
 test('TV kiosk uses existing authentication and exposes no write controls', () => {
   assert.match(kioskSource, /\/api\/auth\/login/);
   assert.match(kioskSource, /\['STAFF', 'ADMIN'\]\.includes/);
-  assert.match(kioskSource, /sessionStorage\.setItem\('tvAccessToken'/);
+  assert.match(kioskSource, /const tokenStorage = window\.localStorage/);
+  assert.match(kioskSource, /tokenStorage\.setItem\('tvAccessToken'/);
+  assert.match(kioskSource, /let tokenRefreshPromise = null/);
+  assert.match(kioskSource, /if \(!tokenRefreshPromise\)/);
+  assert.match(kioskSource, /await refreshAccessToken\(\)/);
   assert.match(kioskSource, /request\('\/api\/tables'\)/);
   assert.match(kioskSource, /request\('\/api\/queue'\)/);
   assert.match(kioskSource, /request\('\/api\/tournaments'\)/);

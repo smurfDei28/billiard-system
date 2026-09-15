@@ -2,7 +2,10 @@
 
 This is a static, read-only display for a Smart TV browser, Android TV box,
 mini PC, or laptop connected through HDMI. It uses the existing authenticated
-backend APIs and stores credentials only in the current browser session.
+backend APIs and stores rotating access credentials in that browser. Sign in
+once with a dedicated Staff account; the display renews its access in the
+background and remains signed in across browser restarts until an operator
+chooses **Sign out**, the account is removed, or its credentials are revoked.
 
 ## Local test
 

@@ -5,10 +5,43 @@
   const refreshMs = Math.max(5000, Number(config.refreshIntervalMs) || 10000);
   const PH_ZONE = 'Asia/Manila';
   const $ = (id) => document.getElementById(id);
-  let accessToken = sessionStorage.getItem('tvAccessToken');
-  let refreshToken = sessionStorage.getItem('tvRefreshToken');
+  const tokenStorage = window.localStorage;
+  let accessToken = tokenStorage.getItem('tvAccessToken') || sessionStorage.getItem('tvAccessToken');
+  let refreshToken = tokenStorage.getItem('tvRefreshToken') || sessionStorage.getItem('tvRefreshToken');
+  let tokenRefreshPromise = null;
   let refreshTimer = null;
   let requestInFlight = false;
+
+  const persistTokens = (tokens) => {
+    accessToken = tokens.accessToken;
+    refreshToken = tokens.refreshToken;
+    tokenStorage.setItem('tvAccessToken', accessToken);
+    tokenStorage.setItem('tvRefreshToken', refreshToken);
+    sessionStorage.removeItem('tvAccessToken');
+    sessionStorage.removeItem('tvRefreshToken');
+  };
+
+  if (accessToken && refreshToken) persistTokens({ accessToken, refreshToken });
+
+  const refreshAccessToken = () => {
+    if (!tokenRefreshPromise) {
+      tokenRefreshPromise = (async () => {
+        const response = await fetch(`${apiUrl}/api/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const error = new Error(body.error || 'Could not renew the TV display connection.');
+          error.unauthorized = response.status === 400 || response.status === 401;
+          throw error;
+        }
+        persistTokens(body);
+      })().finally(() => { tokenRefreshPromise = null; });
+    }
+    return tokenRefreshPromise;
+  };
 
   const request = async (path, options = {}, canRetry = true) => {
     const response = await fetch(`${apiUrl}${path}`, {
@@ -17,13 +50,7 @@
     });
     const body = await response.json().catch(() => ({}));
     if (response.status === 401 && body.code === 'TOKEN_EXPIRED' && refreshToken && canRetry) {
-      const refreshed = await fetch(`${apiUrl}/api/auth/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken }) });
-      if (!refreshed.ok) throw Object.assign(new Error('TV session expired. Please sign in again.'), { unauthorized: true });
-      const tokens = await refreshed.json();
-      accessToken = tokens.accessToken;
-      refreshToken = tokens.refreshToken;
-      sessionStorage.setItem('tvAccessToken', accessToken);
-      sessionStorage.setItem('tvRefreshToken', refreshToken);
+      await refreshAccessToken();
       return request(path, options, false);
     }
     if (!response.ok) throw Object.assign(new Error(body.error || 'Request failed'), { unauthorized: response.status === 401 || response.status === 403 });
@@ -150,6 +177,8 @@
   const showLogin = (message = '') => {
     clearInterval(refreshTimer);
     accessToken = null; refreshToken = null;
+    tokenStorage.removeItem('tvAccessToken');
+    tokenStorage.removeItem('tvRefreshToken');
     sessionStorage.removeItem('tvAccessToken'); sessionStorage.removeItem('tvRefreshToken');
     $('dashboard').classList.add('hidden');
     $('login-view').classList.remove('hidden');
@@ -165,8 +194,7 @@
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || body.errors?.[0]?.msg || 'Could not sign in');
       if (!['STAFF', 'ADMIN'].includes(body.user?.role)) throw new Error('The TV display requires a Staff or Admin account.');
-      accessToken = body.accessToken; refreshToken = body.refreshToken;
-      sessionStorage.setItem('tvAccessToken', accessToken); sessionStorage.setItem('tvRefreshToken', refreshToken);
+      persistTokens(body);
       $('password').value = '';
       showDashboard();
     } catch (error) { $('login-error').textContent = error.message; }
